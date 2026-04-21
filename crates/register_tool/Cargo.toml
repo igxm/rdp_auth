@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[dependencies]
+credential_provider = { path = "../credential_provider" }
+winreg = "0.56.0"
+
 [[bin]]
 name = "register_tool"
 path = "src/main.rs"
