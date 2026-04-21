@@ -12,6 +12,14 @@
 - 注释重点解释维护难点：Windows COM 生命周期、引用计数、凭证序列化、命名管道、安全边界、失败策略。
 - 避免只重复代码表面含义，例如“设置变量值”这类注释没有维护价值。
 
+## 代码分层要求
+
+- 代码必须按功能和逻辑分层，不允许把 COM 导出、类工厂、Provider、Credential、字段定义、凭证序列化、IPC、配置读取、API 调用等长期堆在同一个文件。
+- 单个文件只应承载一个清晰职责；当文件开始同时处理多个概念时，必须拆分为模块，例如 `dll.rs`、`class_factory.rs`、`provider.rs`、`credential.rs`、`fields.rs`、`serialization.rs`。
+- Credential Provider 相关代码应优先按 Windows 生命周期拆分：DLL 入口、COM 类工厂、Provider 枚举、Credential Tile、字段描述符、凭证序列化、UI 状态机。
+- helper 相关代码应按运行边界拆分：命名管道服务、请求路由、配置读取、API client、日志、策略判断。
+- 新增抽象必须服务于可维护性和测试，不为了“看起来分层”制造空壳；但一旦模块职责稳定，就应及时拆文件。
+
 ## 本地检查
 
 提交前至少执行：

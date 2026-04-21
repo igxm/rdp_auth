@@ -5,6 +5,7 @@
 - 所有后续代码、文档、配置变更都必须提交到 git，禁止留下未提交的有效改动。
 - 所有新增代码必须包含必要的中文注释，重点解释 Windows COM、Credential Provider 生命周期、凭证序列化、IPC、安全边界等后期维护难点。
 - 中文注释应解释“为什么这样做”和“此处有什么坑”，避免只重复代码表面含义。
+- 代码必须按功能或逻辑分层，不允许把 COM 导出、类工厂、Provider、Credential、字段定义、凭证序列化、IPC、配置读取、API 调用等长期堆在同一个文件。
 - Credential Provider DLL 只做 RDP 凭证接收、二次认证 UI、调用本地 helper、认证通过后转交原始凭证。
 - 网络请求、注册表读取、日志、策略判断都放到本地 helper，避免 LogonUI 进程被阻塞或拖垮。
 - 第一阶段不隐藏系统默认 Credential Provider，确认 RDP pass-through 链路稳定后再实现过滤器，降低锁死测试机风险。
