@@ -5,11 +5,14 @@
 在管理员 PowerShell 中执行：
 
 ```powershell
-cargo build -p credential_provider
-cargo run -p register_tool -- install --dll .\target\debug\credential_provider.dll
+cargo build --release -p credential_provider
+cargo build --release -p register_tool
+.\target\release\register_tool.exe install --dll .\target\release\credential_provider.dll
 ```
 
-如果你已经进入 `target\debug` 目录，命令应改成：
+项目已配置静态链接 MSVC 运行库，重新构建后的 `register_tool.exe` 和 `credential_provider.dll` 不应再因为缺少 `VCRUNTIME140.dll` 而无法启动。建议测试 VM 使用 `target\release` 产物；如果 VM 上已经复制了旧构建产物，请重新复制最新的 release 文件。
+
+如果你已经进入 `target\release` 目录，命令应改成：
 
 ```powershell
 .\register_tool.exe install --dll .\credential_provider.dll
@@ -17,7 +20,7 @@ cargo run -p register_tool -- install --dll .\target\debug\credential_provider.d
 .\register_tool.exe health
 ```
 
-不要在 `target\debug` 目录下继续写 `.\target\debug\credential_provider.dll`，那会变成不存在的嵌套路径。
+不要在 `target\release` 目录下继续写 `.\target\release\credential_provider.dll`，那会变成不存在的嵌套路径。
 
 安装会写入两个机器级注册表位置：
 
@@ -29,8 +32,8 @@ cargo run -p register_tool -- install --dll .\target\debug\credential_provider.d
 ## 查询状态
 
 ```powershell
-cargo run -p register_tool -- status
-cargo run -p register_tool -- health
+.\target\release\register_tool.exe status
+.\target\release\register_tool.exe health
 ```
 
 ## 卸载 Credential Provider
@@ -38,7 +41,7 @@ cargo run -p register_tool -- health
 在管理员 PowerShell 中执行：
 
 ```powershell
-cargo run -p register_tool -- uninstall
+.\target\release\register_tool.exe uninstall
 ```
 
 ## 应急禁用和恢复
@@ -46,7 +49,7 @@ cargo run -p register_tool -- uninstall
 如果安装后登录界面异常，优先在管理员 PowerShell 中应急禁用枚举入口：
 
 ```powershell
-cargo run -p register_tool -- disable
+.\target\release\register_tool.exe disable
 ```
 
 `disable` 只删除 LogonUI 枚举入口，保留 COM 注册信息，方便继续用 `health` 排查 DLL 路径。
@@ -54,7 +57,7 @@ cargo run -p register_tool -- disable
 确认问题解决后，可以重新启用：
 
 ```powershell
-cargo run -p register_tool -- enable
+.\target\release\register_tool.exe enable
 ```
 
 如果需要彻底清理，再执行 `uninstall`。

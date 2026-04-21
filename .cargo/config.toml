@@ -1,0 +1,4 @@
+[target.x86_64-pc-windows-msvc]
+# 静态链接 MSVC C/C++ 运行库，避免测试 VM 缺少 VCRUNTIME140.dll 时工具或 DLL 无法启动。
+# 这对 `register_tool.exe` 很关键：安装工具必须能在干净 Windows VM 上直接运行。
+rustflags = ["-C", "target-feature=+crt-static"]
