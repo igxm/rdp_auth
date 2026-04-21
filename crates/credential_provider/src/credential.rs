@@ -8,6 +8,8 @@ use std::sync::{Arc, Mutex};
 use auth_core::{AuthMethod, MfaState};
 use windows::Win32::Foundation::{E_INVALIDARG, E_NOTIMPL, E_POINTER, NTSTATUS};
 use windows::Win32::Graphics::Gdi::HBITMAP;
+use windows::Win32::System::RemoteDesktop::{ProcessIdToSessionId, WTSDisconnectSession};
+use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Shell::{
     CPFIS_DISABLED, CPFIS_FOCUSED, CPFIS_NONE, CPFS_DISPLAY_IN_BOTH, CPFS_DISPLAY_IN_SELECTED_TILE,
     CPFS_HIDDEN, CPGSR_NO_CREDENTIAL_NOT_FINISHED, CPGSR_RETURN_CREDENTIAL_FINISHED, CPSI_ERROR,
@@ -23,6 +25,8 @@ use crate::memory::alloc_wide_string;
 use crate::state::CredentialProviderState;
 
 const AUTH_METHOD_LABELS: [&str; 3] = ["手机验证码", "二次密码", "微信扫码（预留）"];
+const MOCK_SMS_CODE: &str = "123456";
+const MOCK_SECOND_PASSWORD: &str = "mock-password";
 
 /// 最小 Credential 对象。
 #[implement(ICredentialProviderCredential)]
@@ -265,7 +269,12 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
                 state.mfa_state = MfaState::Failed("用户取消二次认证".to_owned());
                 state.status_message = "已取消二次认证".to_owned();
                 drop(state);
-                self.refresh_visible_fields()
+                self.refresh_visible_fields()?;
+                // 取消按钮在 RDP 登录场景中应结束这次远程登录尝试。这里走
+                // WTSDisconnectSession 断开当前会话，而不是返回伪造凭证或假装登录失败。
+                // 如果 API 调用失败，保持 Credential Tile 可用，避免因为取消路径再次锁住界面。
+                let _ = disconnect_current_session();
+                Ok(())
             }
             _ => Err(Error::from_hresult(E_INVALIDARG)),
         }
@@ -282,10 +291,29 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
             return Err(Error::from_hresult(E_POINTER));
         }
 
-        let state = self.state.lock().expect("credential state poisoned");
+        let mut state = self.state.lock().expect("credential state poisoned");
+        if !state.mfa_state.allows_serialization() && !state.allow_passthrough_without_mfa {
+            match verify_mock_mfa(&mut state) {
+                Ok(()) => {}
+                Err(message) => {
+                    unsafe {
+                        // SAFETY: `response` 已做非空检查；mock 认证失败时不能交出凭证。
+                        *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
+                        if !status_icon.is_null() {
+                            *status_icon = CPSI_ERROR;
+                        }
+                        if !status_text.is_null() {
+                            *status_text = alloc_wide_string(message)?;
+                        }
+                    }
+                    return Ok(());
+                }
+            }
+        }
+
         let can_return =
             state.mfa_state.allows_serialization() || state.allow_passthrough_without_mfa;
-        let Some(inbound) = state.inbound_serialization.as_ref() else {
+        let Some(inbound) = state.inbound_serialization.as_ref().cloned() else {
             unsafe {
                 // SAFETY: `response` 已做非空检查；没有原始凭证时必须拒绝交出凭证。
                 *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
@@ -310,6 +338,7 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
         // Credential Provider 在 CPUS_LOGON/UNLOCK 场景下不直接调用 LsaLogonUser。
         // 正确边界是把序列化凭证交给 LogonUI/Winlogon，由系统继续交给 LSA；这样才能
         // 保持 Windows 登录审计、策略和错误处理都走系统原生链路。
+        drop(state);
         inbound.write_to(serialization)?;
         unsafe {
             // SAFETY: `response` 已做非空检查；`serialization` 已由 `write_to` 填充。
@@ -390,6 +419,51 @@ fn status_text(state: &CredentialProviderState) -> &str {
     }
 }
 
+fn verify_mock_mfa(state: &mut CredentialProviderState) -> std::result::Result<(), &'static str> {
+    state.mfa_state = MfaState::Verifying;
+    let result = match state.selected_method {
+        AuthMethod::PhoneCode => {
+            if state.phone.trim().is_empty() {
+                Err("请输入手机号")
+            } else if state.sms_code.trim() == MOCK_SMS_CODE {
+                Ok(())
+            } else {
+                Err("短信验证码错误，测试验证码为 123456")
+            }
+        }
+        AuthMethod::SecondPassword => {
+            if state.second_password == MOCK_SECOND_PASSWORD {
+                Ok(())
+            } else {
+                Err("二次密码错误，测试密码为 mock-password")
+            }
+        }
+        AuthMethod::Wechat => Err("微信扫码认证暂未接入，请选择手机验证码或二次密码"),
+    };
+
+    match result {
+        Ok(()) => {
+            state.mfa_state = MfaState::Verified;
+            state.status_message = "mock 二次认证通过".to_owned();
+            Ok(())
+        }
+        Err(message) => {
+            state.mfa_state = MfaState::Failed(message.to_owned());
+            state.status_message = message.to_owned();
+            Err(message)
+        }
+    }
+}
+
+fn disconnect_current_session() -> Result<()> {
+    let mut session_id = 0_u32;
+    unsafe {
+        // SAFETY: 输出指针指向当前栈变量；失败时返回 HRESULT，不使用未初始化 session id。
+        ProcessIdToSessionId(GetCurrentProcessId(), &mut session_id)?;
+        WTSDisconnectSession(None, session_id, false)
+    }
+}
+
 fn send_sms_label(state: &CredentialProviderState) -> &str {
     if state.sms_resend_remaining > 0 {
         "重新发送(60)"
@@ -404,10 +478,11 @@ fn wide_null(value: &str) -> Vec<u16> {
 
 #[cfg(test)]
 mod tests {
+    use super::{MOCK_SECOND_PASSWORD, MOCK_SMS_CODE, verify_mock_mfa};
     use super::{auth_method_from_index, auth_method_index, field_visibility, send_sms_label};
     use crate::fields::MfaField;
     use crate::state::CredentialProviderState;
-    use auth_core::AuthMethod;
+    use auth_core::{AuthMethod, MfaState};
     use windows::Win32::UI::Shell::{CPFIS_DISABLED, CPFS_DISPLAY_IN_SELECTED_TILE, CPFS_HIDDEN};
 
     #[test]
@@ -465,5 +540,37 @@ mod tests {
         let state = CredentialProviderState::default();
 
         assert_eq!(field_visibility(MfaField::Status, &state).0, CPFS_HIDDEN);
+    }
+
+    #[test]
+    fn mock_sms_code_verifies_when_phone_and_code_match() {
+        let mut state = CredentialProviderState::default();
+        state.selected_method = AuthMethod::PhoneCode;
+        state.phone = "13800138000".to_owned();
+        state.sms_code = MOCK_SMS_CODE.to_owned();
+
+        assert_eq!(verify_mock_mfa(&mut state), Ok(()));
+        assert_eq!(state.mfa_state, MfaState::Verified);
+    }
+
+    #[test]
+    fn mock_second_password_verifies_when_password_matches() {
+        let mut state = CredentialProviderState::default();
+        state.selected_method = AuthMethod::SecondPassword;
+        state.second_password = MOCK_SECOND_PASSWORD.to_owned();
+
+        assert_eq!(verify_mock_mfa(&mut state), Ok(()));
+        assert_eq!(state.mfa_state, MfaState::Verified);
+    }
+
+    #[test]
+    fn mock_verification_rejects_wrong_sms_code() {
+        let mut state = CredentialProviderState::default();
+        state.selected_method = AuthMethod::PhoneCode;
+        state.phone = "13800138000".to_owned();
+        state.sms_code = "000000".to_owned();
+
+        assert!(verify_mock_mfa(&mut state).is_err());
+        assert!(matches!(state.mfa_state, MfaState::Failed(_)));
     }
 }

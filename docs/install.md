@@ -103,7 +103,10 @@ reg add "HKLM\SOFTWARE\rdp_auth\config" /v DisableMfa /t REG_DWORD /d 0 /f
 2. 在本地控制台登录页验证：默认策略下应看不到 `RDP 二次认证` 入口，应只看到系统默认登录方式，并能正常进入桌面。
 3. 从另一台机器发起 RDP 登录：默认策略下应只看到 `RDP 二次认证`，不应同时显示系统默认用户/密码入口。
 4. 在 RDP 登录中输入凭证后，应停留在 `RDP 二次认证` Tile，而不是凭证通过后直接进入桌面。
-5. 登录后再次执行 `register_tool.exe health`，确认注册表入口、DLL 路径和三项策略仍符合预期。
+5. 使用 mock 数据验证放行：手机验证码方式输入任意非空手机号和验证码 `123456`，或二次密码方式输入 `mock-password`，点击登录后应继续进入桌面。
+6. 使用错误验证码或错误二次密码验证阻断：应停留在当前 Tile，不应进入桌面。
+7. 点击取消应断开当前 RDP 连接。
+8. 登录后再次执行 `register_tool.exe health`，确认注册表入口、DLL 路径和三项策略仍符合预期。
 
 如果 RDP 登录页同时显示系统默认入口和 `RDP 二次认证`，优先检查：
 
@@ -117,6 +120,8 @@ reg add "HKLM\SOFTWARE\rdp_auth\config" /v DisableMfa /t REG_DWORD /d 0 /f
 - `EnableConsoleMfa` 是否被手动改成了 `1`。
 - `DisableMfa` 是否为 `0`。
 - 是否仍在旧 DLL 上测试。
+
+当前 mock 认证只用于验证 Credential Provider 主链路，真实短信发送、二次密码校验和登录日志上报仍在后续 helper/API 阶段接入。
 
 ## 6. 策略调整
 

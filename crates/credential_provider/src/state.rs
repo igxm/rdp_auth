@@ -56,7 +56,7 @@ impl Default for CredentialProviderState {
             mfa_state: MfaState::Idle,
             has_inbound_serialization: false,
             inbound_serialization: None,
-            allow_passthrough_without_mfa: true,
+            allow_passthrough_without_mfa: false,
             usage_scenario: CPUS_LOGON,
             selected_method: AuthMethod::PhoneCode,
             phone: String::new(),
@@ -82,5 +82,11 @@ mod tests {
     fn default_state_waits_for_inbound_serialization() {
         let state = CredentialProviderState::default();
         assert!(!state.has_inbound_serialization);
+    }
+
+    #[test]
+    fn default_state_requires_mfa_before_serialization() {
+        let state = CredentialProviderState::default();
+        assert!(!state.allow_passthrough_without_mfa);
     }
 }

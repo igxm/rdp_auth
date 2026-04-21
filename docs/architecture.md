@@ -54,3 +54,13 @@ Credential Provider Tile 已经预留以下二次认证字段：
 认证方式切换后，Credential 会通过 `ICredentialProviderCredentialEvents` 主动通知 LogonUI 更新字段显示状态。发送验证码后，按钮会进入 `重新发送(60)` 的禁用态，防止重复点击；真正的逐秒倒计时和 60 秒后恢复点击，需要结合受控 UI 刷新或 helper 心跳接入，避免在 LogonUI 进程内使用不受控后台线程。
 
 当前 UI 骨架只保存输入状态和显示状态，真实 helper 调用、短信发送、二次密码校验和 fail closed 放行策略将在后续阶段接入。
+
+## Mock 认证阶段
+
+在 helper 和真实 API 接入前，Credential Provider 内置最小 mock 认证用于验证阻断/放行主链路：
+
+1. 手机验证码认证：手机号非空且验证码为 `123456` 时通过。
+2. 二次密码认证：二次密码为 `mock-password` 时通过。
+3. 微信扫码认证：仍保持未接入状态，不允许放行。
+
+mock 认证通过后，`GetSerialization` 才返回缓存的 RDP 原始凭证；mock 认证失败时返回 `CPGSR_NO_CREDENTIAL_NOT_FINISHED`，LogonUI 会停留在当前 Tile。点击取消会调用 Remote Desktop Services API 断开当前会话，用于结束本次 RDP 登录尝试。

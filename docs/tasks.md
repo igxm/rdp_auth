@@ -79,8 +79,10 @@
 - [x] 发送验证码后立即把按钮切换为禁用态，并显示 `重新发送(60)`。
 - [ ] 实现短信验证码重新发送倒计时递减，并在 60 秒后恢复为可点击 `发送验证码`。（需结合 LogonUI events 的受控刷新或 helper 心跳，避免在 CP DLL 中用不受控后台线程刷 UI）
 - [x] 设计 `MfaState` 状态机：空闲、发送短信中、等待输入、认证中、成功、失败。
-- [ ] 二次认证未通过时，`GetSerialization` 不返回原始凭证。
-- [ ] 二次认证通过后，`GetSerialization` 返回缓存的原始凭证。
+- [x] 使用 mock 数据模拟认证通过情况：手机验证码 `123456`、二次密码 `mock-password`。
+- [x] 二次认证未通过时，`GetSerialization` 不返回原始凭证。
+- [x] 二次认证通过后，`GetSerialization` 返回缓存的原始凭证。
+- [x] 点击取消按钮时，调用 Remote Desktop Services API 断开当前 RDP 会话。
 - [x] 中文注释解释 LogonUI UI 更新机制和状态切换原因。
 
 ## 阶段 5：本地 helper 与 IPC
