@@ -10,6 +10,7 @@ mod dll;
 mod fields;
 mod memory;
 mod provider;
+mod serialization;
 mod state;
 
 pub use dll::{DllCanUnloadNow, DllGetClassObject, DllMain};

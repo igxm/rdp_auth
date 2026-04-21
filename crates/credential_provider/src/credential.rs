@@ -3,34 +3,34 @@
 //! Credential 对象负责字段值、用户交互和 `GetSerialization`。阶段 2 只返回一个说明性
 //! 文本字段，不交出任何凭证；阶段 3 会在这里接入原始 RDP 凭证的返回逻辑。
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
-use auth_core::MfaState;
 use windows::Win32::Foundation::{E_NOTIMPL, E_POINTER, NTSTATUS};
 use windows::Win32::Graphics::Gdi::HBITMAP;
 use windows::Win32::UI::Shell::{
     CPFIS_NONE, CPFS_DISPLAY_IN_BOTH, CPGSR_NO_CREDENTIAL_NOT_FINISHED,
-    CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION, CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE,
-    CREDENTIAL_PROVIDER_FIELD_STATE, CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE,
-    CREDENTIAL_PROVIDER_STATUS_ICON, ICredentialProviderCredential,
-    ICredentialProviderCredential_Impl, ICredentialProviderCredentialEvents,
+    CPGSR_RETURN_CREDENTIAL_FINISHED, CPSI_ERROR, CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION,
+    CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE, CREDENTIAL_PROVIDER_FIELD_STATE,
+    CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE, CREDENTIAL_PROVIDER_STATUS_ICON,
+    ICredentialProviderCredential, ICredentialProviderCredential_Impl,
+    ICredentialProviderCredentialEvents,
 };
 use windows::core::{BOOL, Error, PCWSTR, PWSTR, Ref, Result, implement};
 
 use crate::fields::FIELD_STATUS;
 use crate::memory::alloc_wide_string;
+use crate::state::CredentialProviderState;
 
 /// 最小 Credential 对象。
 #[implement(ICredentialProviderCredential)]
 pub struct RdpMfaCredential {
-    state: Mutex<MfaState>,
+    state: Arc<Mutex<CredentialProviderState>>,
 }
 
-impl Default for RdpMfaCredential {
-    fn default() -> Self {
-        Self {
-            state: Mutex::new(MfaState::Idle),
-        }
+impl RdpMfaCredential {
+    /// 创建 Credential Tile，并共享 Provider 在 `SetSerialization` 中缓存的原始凭证。
+    pub fn new(state: Arc<Mutex<CredentialProviderState>>) -> Self {
+        Self { state }
     }
 }
 
@@ -124,20 +124,47 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
     fn GetSerialization(
         &self,
         response: *mut CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE,
-        _serialization: *mut CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION,
-        _status_text: *mut PWSTR,
-        _status_icon: *mut CREDENTIAL_PROVIDER_STATUS_ICON,
+        serialization: *mut CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION,
+        status_text: *mut PWSTR,
+        status_icon: *mut CREDENTIAL_PROVIDER_STATUS_ICON,
     ) -> Result<()> {
-        if response.is_null() {
+        if response.is_null() || serialization.is_null() {
             return Err(Error::from_hresult(E_POINTER));
         }
 
-        unsafe {
-            // SAFETY: `response` 已做非空检查。阶段 2 还不交出凭证，只让 Tile 能被枚举。
-            *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
+        let state = self.state.lock().expect("credential state poisoned");
+        let can_return =
+            state.mfa_state.allows_serialization() || state.allow_passthrough_without_mfa;
+        let Some(inbound) = state.inbound_serialization.as_ref() else {
+            unsafe {
+                // SAFETY: `response` 已做非空检查；没有原始凭证时必须拒绝交出凭证。
+                *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
+                if !status_icon.is_null() {
+                    *status_icon = CPSI_ERROR;
+                }
+                if !status_text.is_null() {
+                    *status_text = alloc_wide_string("未收到 RDP 原始凭证，无法继续登录")?;
+                }
+            }
+            return Ok(());
+        };
+
+        if !can_return {
+            unsafe {
+                // SAFETY: `response` 已做非空检查；MFA 未通过时保持在当前 Tile。
+                *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
+            }
+            return Ok(());
         }
-        let mut state = self.state.lock().expect("credential state poisoned");
-        *state = MfaState::Idle;
+
+        // Credential Provider 在 CPUS_LOGON/UNLOCK 场景下不直接调用 LsaLogonUser。
+        // 正确边界是把序列化凭证交给 LogonUI/Winlogon，由系统继续交给 LSA；这样才能
+        // 保持 Windows 登录审计、策略和错误处理都走系统原生链路。
+        inbound.write_to(serialization)?;
+        unsafe {
+            // SAFETY: `response` 已做非空检查；`serialization` 已由 `write_to` 填充。
+            *response = CPGSR_RETURN_CREDENTIAL_FINISHED;
+        }
         Ok(())
     }
 

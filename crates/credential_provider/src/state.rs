@@ -8,6 +8,8 @@ use auth_core::MfaState;
 use windows::Win32::UI::Shell::{CPUS_LOGON, CREDENTIAL_PROVIDER_USAGE_SCENARIO};
 use windows::core::GUID;
 
+use crate::serialization::InboundSerialization;
+
 /// 当前 Credential Provider 的 CLSID。
 ///
 /// 后续 `register_tool` 会把同一个 CLSID 写入系统 Credential Providers 注册表路径。
@@ -21,6 +23,10 @@ pub struct CredentialProviderState {
     pub mfa_state: MfaState,
     /// 是否已经收到 LogonUI 传入的 RDP 原始凭证序列化数据。
     pub has_inbound_serialization: bool,
+    /// 深拷贝后的 RDP 原始凭证。不能保存 LogonUI 传入的原始指针。
+    pub inbound_serialization: Option<InboundSerialization>,
+    /// 阶段 3 用于验证 pass-through 链路的开关；真实 MFA 接入后应由策略控制。
+    pub allow_passthrough_without_mfa: bool,
     /// 当前使用场景。第一版只支持 RDP 登录常见的 logon/unlock 场景。
     pub usage_scenario: CREDENTIAL_PROVIDER_USAGE_SCENARIO,
 }
@@ -30,6 +36,8 @@ impl Default for CredentialProviderState {
         Self {
             mfa_state: MfaState::Idle,
             has_inbound_serialization: false,
+            inbound_serialization: None,
+            allow_passthrough_without_mfa: true,
             usage_scenario: CPUS_LOGON,
         }
     }

@@ -57,14 +57,14 @@
 
 ## 阶段 3：RDP 原始凭证接收与原样转交
 
-- [ ] 实现 `ICredentialProvider::SetSerialization`。
-- [ ] 深拷贝保存 `CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION`。
-- [ ] 保存字段包括 `ulAuthenticationPackage`、`clsidCredentialProvider`、`cbSerialization`、`rgbSerialization`。
-- [ ] 实现 `ICredentialProviderCredential::GetSerialization`。
-- [ ] 在未启用二次认证时，将缓存的原始凭证原样返回给 LogonUI。
-- [ ] 如果没有收到 inbound serialization，显示明确错误并拒绝提交。
+- [x] 实现 `ICredentialProvider::SetSerialization`。
+- [x] 深拷贝保存 `CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION`。
+- [x] 保存字段包括 `ulAuthenticationPackage`、`clsidCredentialProvider`、`cbSerialization`、`rgbSerialization`。
+- [x] 实现 `ICredentialProviderCredential::GetSerialization`。
+- [x] 在未启用二次认证时，将缓存的原始凭证原样返回给 LogonUI。
+- [x] 如果没有收到 inbound serialization，显示明确错误并拒绝提交。
 - [ ] 使用 RDP 测试：mstsc 输入凭证后，目标机 CP 能收到 serialization 并成功继续登录。
-- [ ] 用中文注释说明为什么不能自己调用 `LsaLogonUser`，以及为什么交给 Winlogon 处理。
+- [x] 用中文注释说明为什么不能自己调用 `LsaLogonUser`，以及为什么交给 Winlogon 处理。
 
 ## 阶段 4：二次认证 UI 状态机
 

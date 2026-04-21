@@ -3,7 +3,7 @@
 //! Provider 对象负责 LogonUI 的枚举生命周期：使用场景、字段描述符、Credential 数量和
 //! Credential 实例创建。它不直接处理字段输入，也不做网络或 IPC。
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use windows::Win32::Foundation::{E_INVALIDARG, E_NOTIMPL, E_POINTER};
 use windows::Win32::UI::Shell::{
@@ -16,6 +16,7 @@ use windows::core::{BOOL, Error, Ref, Result, implement};
 
 use crate::credential::RdpMfaCredential;
 use crate::fields::{FIELD_COUNT, field_descriptor};
+use crate::serialization::InboundSerialization;
 use crate::state::CredentialProviderState;
 
 /// 最小 Credential Provider。
@@ -24,13 +25,13 @@ use crate::state::CredentialProviderState;
 /// 调用线程模型更细，可以再收窄锁范围。不要在持锁时做 IPC 或网络，避免登录界面死锁。
 #[implement(ICredentialProvider)]
 pub struct RdpMfaProvider {
-    state: Mutex<CredentialProviderState>,
+    state: Arc<Mutex<CredentialProviderState>>,
 }
 
 impl Default for RdpMfaProvider {
     fn default() -> Self {
         Self {
-            state: Mutex::new(CredentialProviderState::default()),
+            state: Arc::new(Mutex::new(CredentialProviderState::default())),
         }
     }
 }
@@ -58,8 +59,18 @@ impl ICredentialProvider_Impl for RdpMfaProvider_Impl {
         &self,
         serialization: *const CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION,
     ) -> Result<()> {
+        let copied = if serialization.is_null() {
+            None
+        } else {
+            Some(unsafe {
+                // SAFETY: 指针来自 LogonUI 的 `SetSerialization` 调用，立即深拷贝，不保存原始指针。
+                InboundSerialization::copy_from_raw(serialization)?
+            })
+        };
+
         let mut state = self.state.lock().expect("provider state poisoned");
-        state.has_inbound_serialization = !serialization.is_null();
+        state.has_inbound_serialization = copied.is_some();
+        state.inbound_serialization = copied;
         Ok(())
     }
 
@@ -109,6 +120,6 @@ impl ICredentialProvider_Impl for RdpMfaProvider_Impl {
         if index != 0 {
             return Err(Error::from_hresult(E_INVALIDARG));
         }
-        Ok(RdpMfaCredential::default().into())
+        Ok(RdpMfaCredential::new(Arc::clone(&self.state)).into())
     }
 }
