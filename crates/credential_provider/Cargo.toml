@@ -12,7 +12,7 @@ path = "src/lib.rs"
 auth_config = { path = "../auth_config" }
 auth_core = { path = "../auth_core" }
 auth_ipc = { path = "../auth_ipc" }
-windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Com", "Win32_UI_Shell"] }
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Com", "Win32_System_RemoteDesktop", "Win32_System_Threading", "Win32_UI_Shell"] }
 windows-core = "0.62.2"
 
 [lints]

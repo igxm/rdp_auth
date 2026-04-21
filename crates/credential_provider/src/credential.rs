@@ -5,21 +5,24 @@
 
 use std::sync::{Arc, Mutex};
 
-use windows::Win32::Foundation::{E_NOTIMPL, E_POINTER, NTSTATUS};
+use auth_core::{AuthMethod, MfaState};
+use windows::Win32::Foundation::{E_INVALIDARG, E_NOTIMPL, E_POINTER, NTSTATUS};
 use windows::Win32::Graphics::Gdi::HBITMAP;
 use windows::Win32::UI::Shell::{
-    CPFIS_NONE, CPFS_DISPLAY_IN_BOTH, CPGSR_NO_CREDENTIAL_NOT_FINISHED,
-    CPGSR_RETURN_CREDENTIAL_FINISHED, CPSI_ERROR, CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION,
-    CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE, CREDENTIAL_PROVIDER_FIELD_STATE,
-    CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE, CREDENTIAL_PROVIDER_STATUS_ICON,
-    ICredentialProviderCredential, ICredentialProviderCredential_Impl,
-    ICredentialProviderCredentialEvents,
+    CPFIS_DISABLED, CPFIS_FOCUSED, CPFIS_NONE, CPFS_DISPLAY_IN_BOTH, CPFS_DISPLAY_IN_SELECTED_TILE,
+    CPFS_HIDDEN, CPGSR_NO_CREDENTIAL_NOT_FINISHED, CPGSR_RETURN_CREDENTIAL_FINISHED, CPSI_ERROR,
+    CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION, CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE,
+    CREDENTIAL_PROVIDER_FIELD_STATE, CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE,
+    CREDENTIAL_PROVIDER_STATUS_ICON, ICredentialProviderCredential,
+    ICredentialProviderCredential_Impl, ICredentialProviderCredentialEvents,
 };
 use windows::core::{BOOL, Error, PCWSTR, PWSTR, Ref, Result, implement};
 
-use crate::fields::FIELD_STATUS;
+use crate::fields::MfaField;
 use crate::memory::alloc_wide_string;
 use crate::state::CredentialProviderState;
+
+const AUTH_METHOD_LABELS: [&str; 3] = ["手机验证码", "二次密码", "微信扫码（预留）"];
 
 /// 最小 Credential 对象。
 #[implement(ICredentialProviderCredential)]
@@ -57,22 +60,42 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
         field_state: *mut CREDENTIAL_PROVIDER_FIELD_STATE,
         interactive_state: *mut CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE,
     ) -> Result<()> {
-        if field_id != FIELD_STATUS || field_state.is_null() || interactive_state.is_null() {
+        if field_state.is_null() || interactive_state.is_null() {
             return Err(Error::from_hresult(E_POINTER));
         }
+        let Some(field) = MfaField::from_id(field_id) else {
+            return Err(Error::from_hresult(E_INVALIDARG));
+        };
+
+        let state = self.state.lock().expect("credential state poisoned");
+        let (visible_state, input_state) = field_visibility(field, state.selected_method);
         unsafe {
-            // SAFETY: 两个输出指针已做非空检查，字段 ID 也已限制在当前最小字段集合内。
-            *field_state = CPFS_DISPLAY_IN_BOTH;
-            *interactive_state = CPFIS_NONE;
+            // SAFETY: 两个输出指针已做非空检查，字段 ID 也已限制在当前字段集合内。
+            *field_state = visible_state;
+            *interactive_state = input_state;
         }
         Ok(())
     }
 
     fn GetStringValue(&self, field_id: u32) -> Result<PWSTR> {
-        if field_id != FIELD_STATUS {
-            return Err(Error::from_hresult(E_POINTER));
-        }
-        alloc_wide_string("RDP 二次认证")
+        let Some(field) = MfaField::from_id(field_id) else {
+            return Err(Error::from_hresult(E_INVALIDARG));
+        };
+
+        let state = self.state.lock().expect("credential state poisoned");
+        let value = match field {
+            MfaField::Title => "RDP 二次认证",
+            MfaField::AuthMethod => auth_method_label(state.selected_method),
+            MfaField::Phone => state.phone.as_str(),
+            MfaField::SmsCode => state.sms_code.as_str(),
+            MfaField::SendSms => "发送验证码",
+            MfaField::SecondPassword => state.second_password.as_str(),
+            MfaField::WechatNotice => "微信扫码认证已预留，当前版本暂未接入。",
+            MfaField::Submit => "登录",
+            MfaField::Cancel => "取消",
+            MfaField::Status => status_text(&state),
+        };
+        alloc_wide_string(value)
     }
 
     fn GetBitmapValue(&self, _field_id: u32) -> Result<HBITMAP> {
@@ -88,37 +111,106 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
         Err(Error::from_hresult(E_NOTIMPL))
     }
 
-    fn GetSubmitButtonValue(&self, _field_id: u32) -> Result<u32> {
-        Err(Error::from_hresult(E_NOTIMPL))
+    fn GetSubmitButtonValue(&self, field_id: u32) -> Result<u32> {
+        if field_id != MfaField::Submit as u32 {
+            return Err(Error::from_hresult(E_INVALIDARG));
+        }
+        Ok(MfaField::Status as u32)
     }
 
     fn GetComboBoxValueCount(
         &self,
-        _field_id: u32,
+        field_id: u32,
         _items: *mut u32,
         _selected_item: *mut u32,
     ) -> Result<()> {
-        Err(Error::from_hresult(E_NOTIMPL))
+        if field_id != MfaField::AuthMethod as u32 {
+            return Err(Error::from_hresult(E_INVALIDARG));
+        }
+        if _items.is_null() || _selected_item.is_null() {
+            return Err(Error::from_hresult(E_POINTER));
+        }
+
+        let state = self.state.lock().expect("credential state poisoned");
+        unsafe {
+            // SAFETY: 两个输出指针已做非空检查，组合框固定提供三种认证方式。
+            *_items = AUTH_METHOD_LABELS.len() as u32;
+            *_selected_item = auth_method_index(state.selected_method);
+        }
+        Ok(())
     }
 
-    fn GetComboBoxValueAt(&self, _field_id: u32, _item: u32) -> Result<PWSTR> {
-        Err(Error::from_hresult(E_NOTIMPL))
+    fn GetComboBoxValueAt(&self, field_id: u32, item: u32) -> Result<PWSTR> {
+        if field_id != MfaField::AuthMethod as u32 {
+            return Err(Error::from_hresult(E_INVALIDARG));
+        }
+        let Some(label) = AUTH_METHOD_LABELS.get(item as usize) else {
+            return Err(Error::from_hresult(E_INVALIDARG));
+        };
+        alloc_wide_string(label)
     }
 
-    fn SetStringValue(&self, _field_id: u32, _value: &PCWSTR) -> Result<()> {
-        Err(Error::from_hresult(E_NOTIMPL))
+    fn SetStringValue(&self, field_id: u32, value: &PCWSTR) -> Result<()> {
+        let Some(field) = MfaField::from_id(field_id) else {
+            return Err(Error::from_hresult(E_INVALIDARG));
+        };
+        let value = unsafe {
+            // SAFETY: LogonUI 传入的是以 NUL 结尾的只读宽字符串；这里立即复制到 Rust String。
+            value.to_string().unwrap_or_default()
+        };
+
+        let mut state = self.state.lock().expect("credential state poisoned");
+        match field {
+            MfaField::Phone => state.phone = value,
+            MfaField::SmsCode => state.sms_code = value,
+            MfaField::SecondPassword => state.second_password = value,
+            _ => return Err(Error::from_hresult(E_INVALIDARG)),
+        }
+        Ok(())
     }
 
     fn SetCheckboxValue(&self, _field_id: u32, _checked: BOOL) -> Result<()> {
         Err(Error::from_hresult(E_NOTIMPL))
     }
 
-    fn SetComboBoxSelectedValue(&self, _field_id: u32, _selected_item: u32) -> Result<()> {
-        Err(Error::from_hresult(E_NOTIMPL))
+    fn SetComboBoxSelectedValue(&self, field_id: u32, selected_item: u32) -> Result<()> {
+        if field_id != MfaField::AuthMethod as u32 {
+            return Err(Error::from_hresult(E_INVALIDARG));
+        }
+        let Some(method) = auth_method_from_index(selected_item) else {
+            return Err(Error::from_hresult(E_INVALIDARG));
+        };
+
+        let mut state = self.state.lock().expect("credential state poisoned");
+        state.selected_method = method;
+        state.status_message = match method {
+            AuthMethod::PhoneCode => "请输入手机号并发送验证码".to_owned(),
+            AuthMethod::SecondPassword => "请输入二次密码".to_owned(),
+            AuthMethod::Wechat => "微信扫码认证暂未接入，请选择其他方式".to_owned(),
+        };
+        Ok(())
     }
 
-    fn CommandLinkClicked(&self, _field_id: u32) -> Result<()> {
-        Err(Error::from_hresult(E_NOTIMPL))
+    fn CommandLinkClicked(&self, field_id: u32) -> Result<()> {
+        let Some(field) = MfaField::from_id(field_id) else {
+            return Err(Error::from_hresult(E_INVALIDARG));
+        };
+
+        let mut state = self.state.lock().expect("credential state poisoned");
+        match field {
+            MfaField::SendSms => {
+                // helper 接入前先只更新 UI 状态，不在 LogonUI 进程里做网络请求。
+                state.mfa_state = MfaState::WaitingInput;
+                state.status_message = "验证码发送流程待接入 helper，当前仅保存输入状态".to_owned();
+                Ok(())
+            }
+            MfaField::Cancel => {
+                state.mfa_state = MfaState::Failed("用户取消二次认证".to_owned());
+                state.status_message = "已取消二次认证".to_owned();
+                Ok(())
+            }
+            _ => Err(Error::from_hresult(E_INVALIDARG)),
+        }
     }
 
     fn GetSerialization(
@@ -176,5 +268,104 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
         _status_icon: *mut CREDENTIAL_PROVIDER_STATUS_ICON,
     ) -> Result<()> {
         Ok(())
+    }
+}
+
+fn field_visibility(
+    field: MfaField,
+    method: AuthMethod,
+) -> (
+    CREDENTIAL_PROVIDER_FIELD_STATE,
+    CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE,
+) {
+    match field {
+        MfaField::Title => (CPFS_DISPLAY_IN_BOTH, CPFIS_NONE),
+        MfaField::AuthMethod => (CPFS_DISPLAY_IN_SELECTED_TILE, CPFIS_FOCUSED),
+        MfaField::Phone | MfaField::SmsCode | MfaField::SendSms
+            if method == AuthMethod::PhoneCode =>
+        {
+            (CPFS_DISPLAY_IN_SELECTED_TILE, CPFIS_NONE)
+        }
+        MfaField::SecondPassword if method == AuthMethod::SecondPassword => {
+            (CPFS_DISPLAY_IN_SELECTED_TILE, CPFIS_FOCUSED)
+        }
+        MfaField::WechatNotice if method == AuthMethod::Wechat => {
+            (CPFS_DISPLAY_IN_SELECTED_TILE, CPFIS_DISABLED)
+        }
+        MfaField::Submit | MfaField::Cancel | MfaField::Status => {
+            (CPFS_DISPLAY_IN_SELECTED_TILE, CPFIS_NONE)
+        }
+        _ => (CPFS_HIDDEN, CPFIS_NONE),
+    }
+}
+
+fn auth_method_index(method: AuthMethod) -> u32 {
+    match method {
+        AuthMethod::PhoneCode => 0,
+        AuthMethod::SecondPassword => 1,
+        AuthMethod::Wechat => 2,
+    }
+}
+
+fn auth_method_from_index(index: u32) -> Option<AuthMethod> {
+    match index {
+        0 => Some(AuthMethod::PhoneCode),
+        1 => Some(AuthMethod::SecondPassword),
+        2 => Some(AuthMethod::Wechat),
+        _ => None,
+    }
+}
+
+fn auth_method_label(method: AuthMethod) -> &'static str {
+    AUTH_METHOD_LABELS[auth_method_index(method) as usize]
+}
+
+fn status_text(state: &CredentialProviderState) -> &str {
+    match &state.mfa_state {
+        MfaState::Failed(message) => message.as_str(),
+        _ => state.status_message.as_str(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{auth_method_from_index, auth_method_index, field_visibility};
+    use crate::fields::MfaField;
+    use auth_core::AuthMethod;
+    use windows::Win32::UI::Shell::{CPFS_DISPLAY_IN_SELECTED_TILE, CPFS_HIDDEN};
+
+    #[test]
+    fn auth_method_indices_are_stable_for_combobox() {
+        assert_eq!(auth_method_index(AuthMethod::PhoneCode), 0);
+        assert_eq!(auth_method_index(AuthMethod::SecondPassword), 1);
+        assert_eq!(auth_method_index(AuthMethod::Wechat), 2);
+        assert_eq!(auth_method_from_index(0), Some(AuthMethod::PhoneCode));
+        assert_eq!(auth_method_from_index(1), Some(AuthMethod::SecondPassword));
+        assert_eq!(auth_method_from_index(2), Some(AuthMethod::Wechat));
+        assert_eq!(auth_method_from_index(3), None);
+    }
+
+    #[test]
+    fn phone_fields_only_show_for_phone_method() {
+        assert_eq!(
+            field_visibility(MfaField::Phone, AuthMethod::PhoneCode).0,
+            CPFS_DISPLAY_IN_SELECTED_TILE
+        );
+        assert_eq!(
+            field_visibility(MfaField::Phone, AuthMethod::SecondPassword).0,
+            CPFS_HIDDEN
+        );
+    }
+
+    #[test]
+    fn second_password_field_only_shows_for_password_method() {
+        assert_eq!(
+            field_visibility(MfaField::SecondPassword, AuthMethod::SecondPassword).0,
+            CPFS_DISPLAY_IN_SELECTED_TILE
+        );
+        assert_eq!(
+            field_visibility(MfaField::SecondPassword, AuthMethod::PhoneCode).0,
+            CPFS_HIDDEN
+        );
     }
 }

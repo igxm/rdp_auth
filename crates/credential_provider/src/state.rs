@@ -4,7 +4,7 @@
 //! 凭证序列化逻辑。后续新增状态时，优先判断它属于 Provider 生命周期还是 Credential
 //! Tile 生命周期，避免状态边界混乱。
 
-use auth_core::MfaState;
+use auth_core::{AuthMethod, MfaState};
 use windows::Win32::UI::Shell::{CPUS_LOGON, CREDENTIAL_PROVIDER_USAGE_SCENARIO};
 use windows::core::GUID;
 
@@ -35,6 +35,16 @@ pub struct CredentialProviderState {
     pub allow_passthrough_without_mfa: bool,
     /// 当前使用场景。第一版只支持 RDP 登录常见的 logon/unlock 场景。
     pub usage_scenario: CREDENTIAL_PROVIDER_USAGE_SCENARIO,
+    /// 当前选择的二次认证方式。UI 通过组合框切换，后续 helper 会按这个值路由请求。
+    pub selected_method: AuthMethod,
+    /// 手机号输入值。Credential Provider 进程内只短暂保存 UI 内容，不写日志。
+    pub phone: String,
+    /// 短信验证码输入值。验证码属于敏感内容，只能保存在内存状态中。
+    pub sms_code: String,
+    /// 二次密码输入值。后续接入 helper 后必须通过 IPC 传递，不允许写日志。
+    pub second_password: String,
+    /// 用户可见状态文本。这里不放诊断细节，避免把敏感失败原因显示在登录界面。
+    pub status_message: String,
 }
 
 impl Default for CredentialProviderState {
@@ -45,6 +55,11 @@ impl Default for CredentialProviderState {
             inbound_serialization: None,
             allow_passthrough_without_mfa: true,
             usage_scenario: CPUS_LOGON,
+            selected_method: AuthMethod::PhoneCode,
+            phone: String::new(),
+            sms_code: String::new(),
+            second_password: String::new(),
+            status_message: "请选择二次认证方式".to_owned(),
         }
     }
 }
