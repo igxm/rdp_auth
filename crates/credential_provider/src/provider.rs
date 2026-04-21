@@ -17,7 +17,7 @@ use windows::core::{BOOL, Error, Ref, Result, implement};
 use crate::credential::RdpMfaCredential;
 use crate::fields::{FIELD_COUNT, field_descriptor};
 use crate::serialization::InboundSerialization;
-use crate::state::CredentialProviderState;
+use crate::state::{CredentialProviderState, RDP_MFA_PROVIDER_CLSID, take_remote_source_provider};
 
 /// 最小 Credential Provider。
 ///
@@ -62,10 +62,16 @@ impl ICredentialProvider_Impl for RdpMfaProvider_Impl {
         let copied = if serialization.is_null() {
             None
         } else {
-            Some(unsafe {
+            let mut copied = unsafe {
                 // SAFETY: 指针来自 LogonUI 的 `SetSerialization` 调用，立即深拷贝，不保存原始指针。
                 InboundSerialization::copy_from_raw(serialization)?
-            })
+            };
+            if copied.source_provider == RDP_MFA_PROVIDER_CLSID {
+                if let Some(source_provider) = take_remote_source_provider() {
+                    copied.source_provider = source_provider;
+                }
+            }
+            Some(copied)
         };
 
         let mut state = self.state.lock().expect("provider state poisoned");

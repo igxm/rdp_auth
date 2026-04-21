@@ -9,14 +9,17 @@ use windows::Win32::System::Com::CoTaskMemAlloc;
 use windows::Win32::UI::Shell::CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION;
 use windows::core::{Error, GUID, Result};
 
-use crate::state::RDP_MFA_PROVIDER_CLSID;
-
 /// 已深拷贝的 RDP 原始凭证序列化数据。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InboundSerialization {
     /// Windows 认证包 ID，必须原样交回，否则 LSA 不知道如何解释 `rgbSerialization`。
     pub authentication_package: u32,
-    /// 传入时的 Provider CLSID，仅用于诊断和后续兼容性判断，返回时会使用本 Provider CLSID。
+    /// 传入时的 Provider CLSID。
+    ///
+    /// `UpdateRemoteCredential` 为了让 LogonUI 把远程凭证交给本项目 Provider，会临时把
+    /// Provider CLSID 改成本项目 CLSID；但 `GetSerialization` 放行时应恢复原始 Provider
+    /// CLSID。否则系统可能用错误的 Provider 上下文解释原始密码序列化数据，表现为
+    /// 二次认证通过后仍提示用户名或密码错误。
     pub source_provider: GUID,
     /// 原始序列化字节。这里绝不能写日志，因为里面可能包含密码或等价凭证材料。
     pub bytes: Vec<u8>,
@@ -65,14 +68,13 @@ impl InboundSerialization {
 
     /// 将缓存的原始凭证写回 LogonUI 要求的输出结构。
     ///
-    /// `rgbSerialization` 用 COM 分配器重新申请，由 LogonUI 在后续流程释放。返回时
-    /// `clsidCredentialProvider` 使用本 Provider CLSID，表示本次凭证由当前 Provider 交出；
-    /// 认证包和二进制内容保持 RDP 传入时的原始值。
+    /// `rgbSerialization` 用 COM 分配器重新申请，由 LogonUI 在后续流程释放。认证包、
+    /// Provider CLSID 和二进制内容都保持 RDP 传入时的原始值。
     pub fn write_to(
         &self,
         output: *mut CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION,
     ) -> Result<()> {
-        self.write_to_with_provider(output, RDP_MFA_PROVIDER_CLSID)
+        self.write_to_with_provider(output, self.source_provider)
     }
 
     /// 返回传入凭证原本所属的 Provider CLSID。
@@ -82,9 +84,9 @@ impl InboundSerialization {
 
     /// 将缓存的原始凭证写回，并允许调用方指定输出 Provider CLSID。
     ///
-    /// Filter 在关闭 RDP MFA 或应急恢复时需要保持原 Provider，不把远程凭证重定向到
-    /// 本项目 Provider；而认证通过后的 `GetSerialization` 必须写成本项目 Provider。
-    /// 把两种写法集中在这里，可以避免多个模块重复处理 COM 内存分配细节。
+    /// Filter 在 RDP MFA 开启时需要把远程凭证临时重定向到本项目 Provider；关闭 RDP
+    /// MFA、应急恢复或认证通过后则需要保持/恢复原 Provider。把两种写法集中在这里，
+    /// 可以避免多个模块重复处理 COM 内存分配细节。
     pub fn write_to_with_provider(
         &self,
         output: *mut CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION,
@@ -150,9 +152,10 @@ mod tests {
 
     #[test]
     fn writes_serialization_with_new_com_buffer() {
+        let source_provider = GUID::from_u128(0x11111111_2222_3333_4444_555555555555);
         let cached = InboundSerialization {
             authentication_package: 9,
-            source_provider: GUID::zeroed(),
+            source_provider,
             bytes: vec![8_u8, 6, 7],
         };
         let mut output = CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION::default();
@@ -160,6 +163,7 @@ mod tests {
         cached.write_to(&mut output).unwrap();
 
         assert_eq!(output.ulAuthenticationPackage, 9);
+        assert_eq!(output.clsidCredentialProvider, source_provider);
         assert_eq!(output.cbSerialization, 3);
         assert!(!output.rgbSerialization.is_null());
 

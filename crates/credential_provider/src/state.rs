@@ -4,6 +4,8 @@
 //! 凭证序列化逻辑。后续新增状态时，优先判断它属于 Provider 生命周期还是 Credential
 //! Tile 生命周期，避免状态边界混乱。
 
+use std::sync::Mutex;
+
 use auth_core::{AuthMethod, MfaState};
 use windows::Win32::UI::Shell::{CPUS_LOGON, CREDENTIAL_PROVIDER_USAGE_SCENARIO};
 use windows::core::GUID;
@@ -21,6 +23,28 @@ pub const RDP_MFA_PROVIDER_CLSID: GUID = GUID::from_u128(0x92d2cf8d_8e19_49d2_9b
 /// Filter 和 Provider 放在同一个 DLL，但必须使用不同 CLSID 注册。Filter 负责隐藏系统
 /// 默认 Provider，强制 RDP/NLA 凭证先进入我们的二次认证 Tile。
 pub const RDP_MFA_FILTER_CLSID: GUID = GUID::from_u128(0x15e6a4c5_21f7_4f8c_a805_a3c3b2d0a8b2);
+
+static LAST_REMOTE_SOURCE_PROVIDER: Mutex<Option<GUID>> = Mutex::new(None);
+
+/// 记录 `UpdateRemoteCredential` 重定向前的原始 Provider CLSID。
+///
+/// Filter 和 Provider 位于同一个 DLL，通常也在同一个 LogonUI 进程内。Filter 必须把
+/// serialization 的 Provider CLSID 临时改成本项目 CLSID，LogonUI 才会把远程凭证交给
+/// 我们；但认证通过后又要恢复原始 Provider CLSID，避免系统按错误 Provider 上下文解释
+/// 原始密码序列化数据。
+pub fn remember_remote_source_provider(provider: GUID) {
+    *LAST_REMOTE_SOURCE_PROVIDER
+        .lock()
+        .expect("remote source provider lock poisoned") = Some(provider);
+}
+
+/// 取出最近一次 RDP 远程凭证的原始 Provider CLSID。
+pub fn take_remote_source_provider() -> Option<GUID> {
+    LAST_REMOTE_SOURCE_PROVIDER
+        .lock()
+        .expect("remote source provider lock poisoned")
+        .take()
+}
 
 /// Credential Provider 内部状态。
 #[derive(Debug, Clone)]
@@ -70,7 +94,10 @@ impl Default for CredentialProviderState {
 
 #[cfg(test)]
 mod tests {
-    use super::{CredentialProviderState, RDP_MFA_PROVIDER_CLSID};
+    use super::{
+        CredentialProviderState, RDP_MFA_PROVIDER_CLSID, remember_remote_source_provider,
+        take_remote_source_provider,
+    };
     use windows::core::GUID;
 
     #[test]
@@ -88,5 +115,15 @@ mod tests {
     fn default_state_requires_mfa_before_serialization() {
         let state = CredentialProviderState::default();
         assert!(!state.allow_passthrough_without_mfa);
+    }
+
+    #[test]
+    fn remembers_and_takes_remote_source_provider() {
+        let provider = GUID::from_u128(0x11111111_2222_3333_4444_555555555555);
+
+        remember_remote_source_provider(provider);
+
+        assert_eq!(take_remote_source_provider(), Some(provider));
+        assert_eq!(take_remote_source_provider(), None);
     }
 }

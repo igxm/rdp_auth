@@ -20,7 +20,7 @@ use windows::core::PWSTR;
 use windows::core::{BOOL, Error, GUID, Result, implement};
 
 use crate::serialization::InboundSerialization;
-use crate::state::RDP_MFA_PROVIDER_CLSID;
+use crate::state::{RDP_MFA_PROVIDER_CLSID, remember_remote_source_provider};
 
 /// RDP 二次认证 Filter。
 #[implement(ICredentialProviderFilter)]
@@ -107,7 +107,8 @@ impl ICredentialProviderFilter_Impl for RdpMfaFilter_Impl {
             // SAFETY: 指针来自 LogonUI，立即深拷贝，不保存原始指针。
             InboundSerialization::copy_from_raw(input)?
         };
-        inbound.write_to(output)
+        remember_remote_source_provider(inbound.provider_clsid());
+        inbound.write_to_with_provider(output, RDP_MFA_PROVIDER_CLSID)
     }
 }
 

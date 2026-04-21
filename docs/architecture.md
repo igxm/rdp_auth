@@ -65,6 +65,12 @@ Credential Provider Tile 已经预留以下二次认证字段：
 
 mock 认证通过后，`GetSerialization` 才返回缓存的 RDP 原始凭证；mock 认证失败时返回 `CPGSR_NO_CREDENTIAL_NOT_FINISHED`，LogonUI 会停留在当前 Tile。点击取消会调用 Remote Desktop Services API 断开当前会话，用于结束本次 RDP 登录尝试。
 
+放行时必须恢复 RDP 远程凭证原始 Provider CLSID。Filter 会临时把 Provider CLSID 改成本项目 CLSID，让 LogonUI 把 serialization 交给二次认证 Tile；但 `GetSerialization` 返回给系统继续登录时，应恢复原始 Provider CLSID 和原始字节，否则可能出现 mock 认证通过后仍提示用户名或密码错误。
+
+## 认证超时策略
+
+二次认证界面应有超时断开机制：用户进入 Tile 后，如果默认 2 分钟内没有完成认证，应自动断开当前 RDP 会话，避免远程登录界面长时间停留。后续超时时间通过配置文件读取，例如 `MfaTimeoutSeconds`，缺失或非法时恢复默认 120 秒。
+
 ## 认证方式配置策略
 
 手机验证码、二次密码和微信扫码是否启用，适合通过配置文件或注册表中的非敏感策略控制。该配置只决定“哪些认证方式可以展示和提交”，不保存验证码、二次密码、token 等敏感内容。
