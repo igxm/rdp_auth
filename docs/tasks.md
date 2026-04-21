@@ -51,7 +51,7 @@
 - [x] 实现最小 `ICredentialProvider`。
 - [x] 支持 `CPUS_LOGON` 和 `CPUS_UNLOCK_WORKSTATION`。
 - [x] 暂时拒绝 `CPUS_CHANGE_PASSWORD`、`CPUS_CREDUI`、`CPUS_PLAP`。
-- [ ] 实现一个最小 Tile，确认 LogonUI 能枚举并显示。（代码骨架已实现，等待注册工具和 VM 环境验证）
+- [x] 实现一个最小 Tile，确认 LogonUI 能枚举并显示。（VM 已验证）
 - [x] 在代码中用中文注释解释 COM 引用计数、接口查询、对象生命周期。
 - [x] 按职责拆分阶段 2 代码，避免 DLL 入口、类工厂、Provider、Credential、字段和内存分配长期堆在同一个文件。
 
@@ -63,7 +63,7 @@
 - [x] 实现 `ICredentialProviderCredential::GetSerialization`。
 - [x] 在未启用二次认证时，将缓存的原始凭证原样返回给 LogonUI。
 - [x] 如果没有收到 inbound serialization，显示明确错误并拒绝提交。
-- [ ] 使用 RDP 测试：mstsc 输入凭证后，目标机 CP 能收到 serialization 并成功继续登录。
+- [x] 使用 RDP 测试：mstsc 输入凭证后，目标机 CP 能收到 serialization 并成功继续登录。
 - [x] 用中文注释说明为什么不能自己调用 `LsaLogonUser`，以及为什么交给 Winlogon 处理。
 
 ## 阶段 4：二次认证 UI 状态机
@@ -159,12 +159,12 @@
 - [ ] 单元测试：API 错误映射。
 - [ ] 集成测试：helper mock 服务。
 - [ ] 集成测试：CP 调 helper 超时。
-- [ ] VM 测试：RDP + NLA + 正确凭证 + MFA 成功。
+- [x] VM 测试：RDP + NLA + 正确凭证 + MFA 成功。（当前为 pass-through 验证，真实 MFA 接入后需复测）
 - [ ] VM 测试：RDP + NLA + 正确凭证 + MFA 失败。
 - [ ] VM 测试：RDP 未传入 serialization 的降级提示。
 - [ ] VM 测试：服务端不可达时默认拒绝登录。
-- [ ] VM 测试：系统默认 Provider 未隐藏时可恢复登录。
-- [ ] VM 测试：Filter 启用后无法绕过 MFA。
+- [x] VM 测试：系统默认 Provider 未隐藏时可恢复登录。
+- [x] VM 测试：Filter 启用后无法绕过 MFA。（当前验证为无法绕过 Provider，真实 MFA 接入后需复测）
 
 ## 阶段 12：安全与运维要求
 
@@ -180,12 +180,12 @@
 
 ## 第一里程碑验收标准
 
-- [ ] Rust Credential Provider DLL 能注册并被 LogonUI 加载。
-- [ ] RDP 登录时能显示自定义二次认证 Tile。
-- [ ] CP 能收到 `SetSerialization` 传入的 RDP 原始凭证。
-- [ ] 不做真实二次认证时，CP 能将原始凭证交回 LogonUI 并完成登录。
-- [ ] 代码中关键 COM、serialization、状态机逻辑都有中文注释。
-- [ ] 所有改动已提交到 git。
+- [x] Rust Credential Provider DLL 能注册并被 LogonUI 加载。
+- [x] RDP 登录时能显示自定义二次认证 Tile。
+- [x] CP 能收到 `SetSerialization` 传入的 RDP 原始凭证。
+- [x] 不做真实二次认证时，CP 能将原始凭证交回 LogonUI 并完成登录。
+- [x] 代码中关键 COM、serialization、状态机逻辑都有中文注释。
+- [x] 所有改动已提交到 git。
 
 ## 第二里程碑验收标准
 
