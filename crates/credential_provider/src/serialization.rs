@@ -72,6 +72,24 @@ impl InboundSerialization {
         &self,
         output: *mut CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION,
     ) -> Result<()> {
+        self.write_to_with_provider(output, RDP_MFA_PROVIDER_CLSID)
+    }
+
+    /// 返回传入凭证原本所属的 Provider CLSID。
+    pub fn provider_clsid(&self) -> GUID {
+        self.source_provider
+    }
+
+    /// 将缓存的原始凭证写回，并允许调用方指定输出 Provider CLSID。
+    ///
+    /// Filter 在关闭 RDP MFA 或应急恢复时需要保持原 Provider，不把远程凭证重定向到
+    /// 本项目 Provider；而认证通过后的 `GetSerialization` 必须写成本项目 Provider。
+    /// 把两种写法集中在这里，可以避免多个模块重复处理 COM 内存分配细节。
+    pub fn write_to_with_provider(
+        &self,
+        output: *mut CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION,
+        provider_clsid: GUID,
+    ) -> Result<()> {
         if output.is_null() {
             return Err(Error::from_hresult(E_POINTER));
         }
@@ -94,10 +112,10 @@ impl InboundSerialization {
         };
 
         unsafe {
-            // SAFETY: `output` 已做非空检查；字段值都由本结构或固定 CLSID 构造。
+            // SAFETY: `output` 已做非空检查；字段值都由本结构或调用方传入的 CLSID 构造。
             output.write(CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION {
                 ulAuthenticationPackage: self.authentication_package,
-                clsidCredentialProvider: RDP_MFA_PROVIDER_CLSID,
+                clsidCredentialProvider: provider_clsid,
                 cbSerialization: self.bytes.len() as u32,
                 rgbSerialization: bytes_ptr,
             });

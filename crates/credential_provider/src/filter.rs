@@ -1,9 +1,11 @@
 //! Credential Provider Filter 实现。
 //!
 //! 仅注册 Provider 时，LogonUI 仍可能让系统默认 Password Provider 自动消费 RDP/NLA
-//! 传入的凭证，用户就会直接进入桌面。Filter 的职责是在我们的 Provider 同时存在时，
-//! 隐藏其他 Provider，让 RDP 凭证先进入二次认证 Tile。
+//! 传入的凭证，用户就会直接进入桌面。这里把“远程 RDP 接管”和“本地控制台过滤”
+//! 分开处理：RDP/NLA 优先走 `UpdateRemoteCredential` 重定向，本地登录默认不隐藏系统
+//! Provider，避免影响管理员现场维护、PIN、Windows Hello 等正常入口。
 
+use auth_config::load_login_policy;
 use windows::Win32::Foundation::E_POINTER;
 use windows::Win32::UI::Shell::{
     CPUS_LOGON, CPUS_UNLOCK_WORKSTATION, CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION,
@@ -31,7 +33,15 @@ impl ICredentialProviderFilter_Impl for RdpMfaFilter_Impl {
             return Err(Error::from_hresult(E_POINTER));
         }
 
-        // 只在登录/解锁场景过滤。其他场景保持系统默认行为，避免影响 CredUI/改密等流程。
+        let policy = load_login_policy();
+        if !policy.should_filter_console() {
+            // `CPUS_LOGON` 同时覆盖本地控制台和部分远程登录阶段，不能单靠它判断来源。
+            // 默认放开本地 Provider；RDP/NLA 的强制接管放到 `UpdateRemoteCredential`。
+            return Ok(());
+        }
+
+        // 只有显式启用本地 MFA 时才过滤登录/解锁场景。其他场景保持系统默认行为，
+        // 避免影响 CredUI/改密等流程。
         if !matches!(usage_scenario, CPUS_LOGON | CPUS_UNLOCK_WORKSTATION) {
             return Ok(());
         }
@@ -66,6 +76,17 @@ impl ICredentialProviderFilter_Impl for RdpMfaFilter_Impl {
     ) -> Result<()> {
         if input.is_null() || output.is_null() {
             return Err(Error::from_hresult(E_POINTER));
+        }
+
+        let policy = load_login_policy();
+        if !policy.should_route_rdp() {
+            // 应急禁用或关闭 RDP MFA 时，不改写远程凭证归属，交回系统默认 Provider 处理。
+            // 这样管理员可以通过注册表开关快速恢复 RDP 登录测试环境。
+            let inbound = unsafe {
+                // SAFETY: 指针来自 LogonUI，立即深拷贝，不保存原始指针。
+                InboundSerialization::copy_from_raw(input)?
+            };
+            return inbound.write_to_with_provider(output, inbound.provider_clsid());
         }
 
         // RDP/NLA 场景下系统可能要求 Filter 转换远程凭证。这里不解析凭证，只深拷贝并

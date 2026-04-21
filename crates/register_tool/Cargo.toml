@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+auth_config = { path = "../auth_config" }
 credential_provider = { path = "../credential_provider" }
 windows-core = "0.62.2"
 winreg = "0.56.0"

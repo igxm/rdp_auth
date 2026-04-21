@@ -6,6 +6,7 @@
 use std::fmt;
 use std::path::PathBuf;
 
+use auth_config::{LoginPolicy, ensure_default_login_policy, load_login_policy};
 use winreg::RegKey;
 use winreg::enums::HKEY_LOCAL_MACHINE;
 
@@ -76,6 +77,7 @@ pub struct HealthReport {
     pub enum_registered: bool,
     pub filter_registered: bool,
     pub dll_exists: bool,
+    pub login_policy: LoginPolicy,
     pub runtime_dirs: String,
 }
 
@@ -105,6 +107,7 @@ impl fmt::Display for HealthReport {
             "DLL 文件: {}",
             if self.dll_exists { "存在" } else { "缺失" }
         )?;
+        writeln!(formatter, "登录策略:\n{}", self.login_policy)?;
         write!(formatter, "{}", self.runtime_dirs)
     }
 }
@@ -140,6 +143,7 @@ impl fmt::Display for RegistrationStatus {
 pub fn register_provider(registration: &ProviderRegistration) -> Result<(), String> {
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     ensure_runtime_dirs()?;
+    ensure_default_login_policy()?;
 
     // LogonUI 通过这个路径枚举 Credential Provider。默认值只作为显示/诊断名称。
     let (provider_key, _) = hklm
@@ -265,6 +269,11 @@ pub fn query_status() -> Result<RegistrationStatus, String> {
     })
 }
 
+/// 查询当前登录策略。注册表缺失时返回安全默认值。
+pub fn query_login_policy() -> LoginPolicy {
+    load_login_policy()
+}
+
 /// 执行只读健康检查。
 pub fn health_check() -> Result<HealthReport, String> {
     let registration = ProviderRegistration::new(PathBuf::new())?;
@@ -286,6 +295,7 @@ pub fn health_check() -> Result<HealthReport, String> {
         enum_registered,
         filter_registered,
         dll_exists,
+        login_policy: query_login_policy(),
         runtime_dirs: runtime_dirs_status(),
     })
 }

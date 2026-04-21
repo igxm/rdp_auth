@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 auth_core = { path = "../auth_core" }
+winreg = "0.56.0"
 
 [lib]
 path = "src/lib.rs"

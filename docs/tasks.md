@@ -135,13 +135,13 @@
 - [x] 实现 `ICredentialProviderFilter`。
 - [x] 初始版本只记录系统 Provider 枚举情况，不隐藏任何 Provider。（已进入拦截验证阶段：仅在本 Provider 同时存在时隐藏其他 Provider）
 - [x] 在测试稳定后，仅在 RDP 场景和策略开启时隐藏默认密码 Provider。（当前限制在 LOGON/UNLOCK，且缺少本 Provider 时不隐藏其他 Provider）
-- [ ] 将 `Filter()` 调整为默认不隐藏本地控制台登录的系统 Provider，避免影响本地密码、PIN、Windows Hello 等正常登录方式。
-- [ ] 将 RDP / NLA 场景的强制接管逻辑集中放在 `UpdateRemoteCredential()`：收到远程凭证序列化后，把 `clsidCredentialProvider` 改写为本项目 Provider CLSID，再交给 LogonUI 加载二次认证 Tile。
-- [ ] 增加登录场景策略配置，默认 `EnableRdpMfa = 1`、`EnableConsoleMfa = 0`，让 RDP 默认启用二次认证，本地控制台默认不启用。
-- [ ] 为本地控制台登录预留独立策略：当 `EnableConsoleMfa = 1` 时，再允许 Filter 在本地 `CPUS_LOGON` / `CPUS_UNLOCK_WORKSTATION` 阶段执行隐藏默认 Provider 的逻辑。
-- [ ] 在 `register_tool install` 中写入默认策略配置，并在 `status` / `health` 中显示 RDP MFA、本地 MFA、应急禁用开关的当前状态。
-- [ ] 增加策略读取的分层模块，避免把注册表读取、Filter 判断、Provider 状态处理堆在同一个文件。
-- [ ] 增加注释说明：`CPUS_LOGON` 同时覆盖本地登录和 RDP 登录，不能单靠 usage scenario 判断远程来源；RDP/NLA 更可靠的入口是 `UpdateRemoteCredential()`。
+- [x] 将 `Filter()` 调整为默认不隐藏本地控制台登录的系统 Provider，避免影响本地密码、PIN、Windows Hello 等正常登录方式。
+- [x] 将 RDP / NLA 场景的强制接管逻辑集中放在 `UpdateRemoteCredential()`：收到远程凭证序列化后，把 `clsidCredentialProvider` 改写为本项目 Provider CLSID，再交给 LogonUI 加载二次认证 Tile。
+- [x] 增加登录场景策略配置，默认 `EnableRdpMfa = 1`、`EnableConsoleMfa = 0`，让 RDP 默认启用二次认证，本地控制台默认不启用。
+- [x] 为本地控制台登录预留独立策略：当 `EnableConsoleMfa = 1` 时，再允许 Filter 在本地 `CPUS_LOGON` / `CPUS_UNLOCK_WORKSTATION` 阶段执行隐藏默认 Provider 的逻辑。
+- [x] 在 `register_tool install` 中写入默认策略配置，并在 `status` / `health` 中显示 RDP MFA、本地 MFA、应急禁用开关的当前状态。
+- [x] 增加策略读取的分层模块，避免把注册表读取、Filter 判断、Provider 状态处理堆在同一个文件。
+- [x] 增加注释说明：`CPUS_LOGON` 同时覆盖本地登录和 RDP 登录，不能单靠 usage scenario 判断远程来源；RDP/NLA 更可靠的入口是 `UpdateRemoteCredential()`。
 - [ ] 增加注册表应急开关，例如 `DisableMfa = 1`。
 - [ ] 增加安全模式 / 离线恢复文档。
 - [ ] 中文注释解释过滤条件，避免维护人员误改导致无法登录。
