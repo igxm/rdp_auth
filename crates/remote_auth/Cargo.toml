@@ -1,0 +1,17 @@
+[package]
+name = "remote_auth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+auth_config = { path = "../auth_config" }
+auth_core = { path = "../auth_core" }
+auth_ipc = { path = "../auth_ipc" }
+
+[[bin]]
+name = "remote_auth"
+path = "src/main.rs"
+
+[lints]
+workspace = true

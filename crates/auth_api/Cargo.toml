@@ -1,0 +1,15 @@
+[package]
+name = "auth_api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+auth_core = { path = "../auth_core" }
+auth_config = { path = "../auth_config" }
+
+[lib]
+path = "src/lib.rs"
+
+[lints]
+workspace = true

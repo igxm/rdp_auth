@@ -1,6 +1,19 @@
-[package]
-name = "rdp_auth"
+[workspace]
+members = [
+    "crates/auth_api",
+    "crates/auth_config",
+    "crates/auth_core",
+    "crates/auth_ipc",
+    "crates/credential_provider",
+    "crates/register_tool",
+    "crates/remote_auth",
+]
+resolver = "3"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
+license = "UNLICENSED"
 
-[dependencies]
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"

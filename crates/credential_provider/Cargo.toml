@@ -1,0 +1,16 @@
+[package]
+name = "credential_provider"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+[dependencies]
+auth_core = { path = "../auth_core" }
+auth_ipc = { path = "../auth_ipc" }
+
+[lints]
+workspace = true

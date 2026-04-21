@@ -23,23 +23,23 @@
 
 ## 阶段 0：仓库基线与工程规范
 
-- [ ] 将现有单 crate 项目调整为 workspace 结构。
-- [ ] 保留 `docs/agent.md` 和 `docs/login.png` 作为需求输入资料。
-- [ ] 新增架构文档，说明 RDP pass-through MFA 的边界。
-- [ ] 新增开发规范文档，明确 git 提交、中文注释、安全测试和 VM 测试要求。
-- [ ] 新增最小 CI 或本地检查脚本，至少执行 `cargo fmt`、`cargo check`、后续单元测试。
-- [ ] 建立提交规范，例如 `docs: ...`、`feat: ...`、`fix: ...`。
+- [x] 将现有单 crate 项目调整为 workspace 结构。
+- [x] 保留 `docs/agent.md` 和 `docs/login.png` 作为需求输入资料。
+- [x] 新增架构文档，说明 RDP pass-through MFA 的边界。
+- [x] 新增开发规范文档，明确 git 提交、中文注释、安全测试和 VM 测试要求。
+- [x] 新增最小 CI 或本地检查脚本，至少执行 `cargo fmt`、`cargo check`、后续单元测试。
+- [x] 建立提交规范，例如 `docs: ...`、`feat: ...`、`fix: ...`。
 
 ## 阶段 1：Rust Workspace 骨架
 
-- [ ] 创建 `crates/credential_provider`，类型为 `cdylib`，用于实现 Windows Credential Provider COM DLL。
-- [ ] 创建 `crates/remote_auth`，类型为 `bin`，用于本地二次认证 helper。
-- [ ] 创建 `crates/auth_core`，用于保存认证方式、请求响应、错误码、状态机等纯业务类型。
-- [ ] 创建 `crates/auth_ipc`，用于定义 Credential Provider 与 helper 之间的命名管道协议。
-- [ ] 创建 `crates/auth_config`，用于读取注册表和配置文件。
-- [ ] 创建 `crates/auth_api`，用于封装服务端 API 调用。
-- [ ] 创建 `crates/register_tool`，用于安装、注册、卸载 Credential Provider。
-- [ ] 所有 crate 提供中文模块级注释，说明职责边界和维护注意事项。
+- [x] 创建 `crates/credential_provider`，类型为 `cdylib`，用于实现 Windows Credential Provider COM DLL。
+- [x] 创建 `crates/remote_auth`，类型为 `bin`，用于本地二次认证 helper。
+- [x] 创建 `crates/auth_core`，用于保存认证方式、请求响应、错误码、状态机等纯业务类型。
+- [x] 创建 `crates/auth_ipc`，用于定义 Credential Provider 与 helper 之间的命名管道协议。
+- [x] 创建 `crates/auth_config`，用于读取注册表和配置文件。
+- [x] 创建 `crates/auth_api`，用于封装服务端 API 调用。
+- [x] 创建 `crates/register_tool`，用于安装、注册、卸载 Credential Provider。
+- [x] 所有 crate 提供中文模块级注释，说明职责边界和维护注意事项。
 
 ## 阶段 2：Credential Provider DLL 最小加载
 

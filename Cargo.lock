@@ -3,5 +3,48 @@
 version = 4
 
 [[package]]
-name = "rdp_auth"
+name = "auth_api"
 version = "0.1.0"
+dependencies = [
+ "auth_config",
+ "auth_core",
+]
+
+[[package]]
+name = "auth_config"
+version = "0.1.0"
+dependencies = [
+ "auth_core",
+]
+
+[[package]]
+name = "auth_core"
+version = "0.1.0"
+
+[[package]]
+name = "auth_ipc"
+version = "0.1.0"
+dependencies = [
+ "auth_core",
+]
+
+[[package]]
+name = "credential_provider"
+version = "0.1.0"
+dependencies = [
+ "auth_core",
+ "auth_ipc",
+]
+
+[[package]]
+name = "register_tool"
+version = "0.1.0"
+
+[[package]]
+name = "remote_auth"
+version = "0.1.0"
+dependencies = [
+ "auth_config",
+ "auth_core",
+ "auth_ipc",
+]

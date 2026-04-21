@@ -1,0 +1,12 @@
+[package]
+name = "register_tool"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "register_tool"
+path = "src/main.rs"
+
+[lints]
+workspace = true
