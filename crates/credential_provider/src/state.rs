@@ -45,6 +45,9 @@ pub struct CredentialProviderState {
     pub second_password: String,
     /// 用户可见状态文本。这里不放诊断细节，避免把敏感失败原因显示在登录界面。
     pub status_message: String,
+    /// 短信验证码重新发送剩余秒数。倒计时后续需要由 LogonUI 事件或 helper 心跳推进；
+    /// 当前先保存禁用态，避免用户连续点击发送验证码。
+    pub sms_resend_remaining: u32,
 }
 
 impl Default for CredentialProviderState {
@@ -60,6 +63,7 @@ impl Default for CredentialProviderState {
             sms_code: String::new(),
             second_password: String::new(),
             status_message: "请选择二次认证方式".to_owned(),
+            sms_resend_remaining: 0,
         }
     }
 }
