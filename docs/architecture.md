@@ -64,3 +64,15 @@ Credential Provider Tile 已经预留以下二次认证字段：
 3. 微信扫码认证：仍保持未接入状态，不允许放行。
 
 mock 认证通过后，`GetSerialization` 才返回缓存的 RDP 原始凭证；mock 认证失败时返回 `CPGSR_NO_CREDENTIAL_NOT_FINISHED`，LogonUI 会停留在当前 Tile。点击取消会调用 Remote Desktop Services API 断开当前会话，用于结束本次 RDP 登录尝试。
+
+## 认证方式配置策略
+
+手机验证码、二次密码和微信扫码是否启用，适合通过配置文件或注册表中的非敏感策略控制。该配置只决定“哪些认证方式可以展示和提交”，不保存验证码、二次密码、token 等敏感内容。
+
+后续实现时建议增加统一的认证方式策略结构，例如：
+
+1. `EnablePhoneCodeMfa`：控制手机验证码方式。
+2. `EnableSecondPasswordMfa`：控制二次密码方式。
+3. `EnableWechatMfa`：控制微信扫码方式。
+
+安全默认值建议为：手机验证码启用、二次密码启用、微信扫码在真实逻辑接入前关闭。Credential Provider UI 必须根据策略动态生成认证方式列表；被关闭的方法不应展示，也不能通过手工构造字段值提交。如果配置非法或所有认证方式都被关闭，应 fail closed 并显示明确错误，避免配置错误导致绕过二次认证。
