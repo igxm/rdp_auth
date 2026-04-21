@@ -43,15 +43,15 @@
 
 ## 阶段 2：Credential Provider DLL 最小加载
 
-- [ ] 在 `credential_provider` 中配置 `crate-type = ["cdylib"]`。
-- [ ] 导出 `DllGetClassObject`。
-- [ ] 导出 `DllCanUnloadNow`。
-- [ ] 实现最小 `IClassFactory`。
-- [ ] 实现最小 `ICredentialProvider`。
-- [ ] 支持 `CPUS_LOGON` 和 `CPUS_UNLOCK_WORKSTATION`。
-- [ ] 暂时拒绝 `CPUS_CHANGE_PASSWORD`、`CPUS_CREDUI`、`CPUS_PLAP`。
-- [ ] 实现一个最小 Tile，确认 LogonUI 能枚举并显示。
-- [ ] 在代码中用中文注释解释 COM 引用计数、接口查询、对象生命周期。
+- [x] 在 `credential_provider` 中配置 `crate-type = ["cdylib"]`。
+- [x] 导出 `DllGetClassObject`。
+- [x] 导出 `DllCanUnloadNow`。
+- [x] 实现最小 `IClassFactory`。
+- [x] 实现最小 `ICredentialProvider`。
+- [x] 支持 `CPUS_LOGON` 和 `CPUS_UNLOCK_WORKSTATION`。
+- [x] 暂时拒绝 `CPUS_CHANGE_PASSWORD`、`CPUS_CREDUI`、`CPUS_PLAP`。
+- [ ] 实现一个最小 Tile，确认 LogonUI 能枚举并显示。（代码骨架已实现，等待注册工具和 VM 环境验证）
+- [x] 在代码中用中文注释解释 COM 引用计数、接口查询、对象生命周期。
 
 ## 阶段 3：RDP 原始凭证接收与原样转交
 
@@ -92,7 +92,7 @@
 
 ## 阶段 6：配置读取
 
-- [ ] `auth_config` 读取注册表 `SOFTWARE\dexunyun.com\DexunGuard`。
+- [ ] `auth_config` 读取注册表 `SOFTWARE\rdp_auth\config`。
 - [ ] 读取 `hostuuid`。
 - [ ] 读取 `serveraddr`。
 - [ ] 读取 `ClientIp`。
@@ -142,7 +142,7 @@
 - [ ] `register_tool install` 写入 Credential Provider 注册表项。
 - [ ] `register_tool uninstall` 删除注册表项。
 - [ ] 注册 helper 路径。
-- [ ] 初始化 `C:\ProgramData\DexunGuard` 目录。
+- [ ] 初始化 `C:\ProgramData\rdp_auth` 目录。
 - [ ] 初始化日志目录。
 - [ ] 提供健康检查命令。
 - [ ] 提供应急禁用命令。
