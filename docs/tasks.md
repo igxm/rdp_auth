@@ -53,6 +53,7 @@
 - [x] 暂时拒绝 `CPUS_CHANGE_PASSWORD`、`CPUS_CREDUI`、`CPUS_PLAP`。
 - [ ] 实现一个最小 Tile，确认 LogonUI 能枚举并显示。（代码骨架已实现，等待注册工具和 VM 环境验证）
 - [x] 在代码中用中文注释解释 COM 引用计数、接口查询、对象生命周期。
+- [x] 按职责拆分阶段 2 代码，避免 DLL 入口、类工厂、Provider、Credential、字段和内存分配长期堆在同一个文件。
 
 ## 阶段 3：RDP 原始凭证接收与原样转交
 
