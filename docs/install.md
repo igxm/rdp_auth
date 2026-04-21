@@ -9,6 +9,16 @@ cargo build -p credential_provider
 cargo run -p register_tool -- install --dll .\target\debug\credential_provider.dll
 ```
 
+如果你已经进入 `target\debug` 目录，命令应改成：
+
+```powershell
+.\register_tool.exe install --dll .\credential_provider.dll
+.\register_tool.exe status
+.\register_tool.exe health
+```
+
+不要在 `target\debug` 目录下继续写 `.\target\debug\credential_provider.dll`，那会变成不存在的嵌套路径。
+
 安装会写入两个机器级注册表位置：
 
 - `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{CLSID}`
