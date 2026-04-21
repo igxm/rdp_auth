@@ -20,6 +20,7 @@ cargo run -p register_tool -- install --dll .\target\debug\credential_provider.d
 
 ```powershell
 cargo run -p register_tool -- status
+cargo run -p register_tool -- health
 ```
 
 ## 卸载 Credential Provider
@@ -29,6 +30,24 @@ cargo run -p register_tool -- status
 ```powershell
 cargo run -p register_tool -- uninstall
 ```
+
+## 应急禁用和恢复
+
+如果安装后登录界面异常，优先在管理员 PowerShell 中应急禁用枚举入口：
+
+```powershell
+cargo run -p register_tool -- disable
+```
+
+`disable` 只删除 LogonUI 枚举入口，保留 COM 注册信息，方便继续用 `health` 排查 DLL 路径。
+
+确认问题解决后，可以重新启用：
+
+```powershell
+cargo run -p register_tool -- enable
+```
+
+如果需要彻底清理，再执行 `uninstall`。
 
 ## 测试提醒
 

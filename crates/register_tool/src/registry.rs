@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use winreg::RegKey;
 use winreg::enums::HKEY_LOCAL_MACHINE;
 
+use crate::dirs::{ensure_runtime_dirs, runtime_dirs_status};
 use crate::guid::provider_clsid_string;
 
 const PROVIDER_NAME: &str = "RDP Auth MFA Provider";
@@ -47,6 +48,36 @@ impl ProviderRegistration {
     }
 }
 
+/// 健康检查报告。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HealthReport {
+    pub status: RegistrationStatus,
+    pub enum_registered: bool,
+    pub dll_exists: bool,
+    pub runtime_dirs: String,
+}
+
+impl fmt::Display for HealthReport {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(formatter, "{}", self.status)?;
+        writeln!(
+            formatter,
+            "LogonUI 枚举入口: {}",
+            if self.enum_registered {
+                "存在"
+            } else {
+                "缺失/已禁用"
+            }
+        )?;
+        writeln!(
+            formatter,
+            "DLL 文件: {}",
+            if self.dll_exists { "存在" } else { "缺失" }
+        )?;
+        write!(formatter, "{}", self.runtime_dirs)
+    }
+}
+
 /// 当前注册状态。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegistrationStatus {
@@ -77,6 +108,7 @@ impl fmt::Display for RegistrationStatus {
 /// 写入 Credential Provider 注册表项。
 pub fn register_provider(registration: &ProviderRegistration) -> Result<(), String> {
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    ensure_runtime_dirs()?;
 
     // LogonUI 通过这个路径枚举 Credential Provider。默认值只作为显示/诊断名称。
     let (provider_key, _) = hklm
@@ -120,6 +152,34 @@ pub fn unregister_provider() -> Result<(), String> {
     Ok(())
 }
 
+/// 应急禁用 LogonUI 枚举入口。
+///
+/// 这里只删除 Credential Providers 枚举项，保留 COM CLSID 和 InprocServer32，方便后续
+/// `health` 排查 DLL 路径，也能用 `enable` 快速恢复。真正完全清理用 `uninstall`。
+pub fn disable_provider() -> Result<(), String> {
+    let registration = ProviderRegistration::new(PathBuf::new())?;
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    delete_subkey_tree_if_exists(&hklm, &registration.credential_provider_key())
+}
+
+/// 重新启用 LogonUI 枚举入口。
+pub fn enable_provider() -> Result<(), String> {
+    let registration = ProviderRegistration::new(PathBuf::new())?;
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+
+    if hklm.open_subkey(registration.inproc_server_key()).is_err() {
+        return Err("无法启用：COM InprocServer32 尚未注册，请先执行 install".to_owned());
+    }
+
+    let (provider_key, _) = hklm
+        .create_subkey(registration.credential_provider_key())
+        .map_err(|error| format!("创建 Provider 枚举项失败，是否使用管理员运行: {error}"))?;
+    provider_key
+        .set_value("", &PROVIDER_NAME)
+        .map_err(|error| format!("写入 Provider 名称失败: {error}"))?;
+    Ok(())
+}
+
 /// 查询当前 Provider 是否已注册。
 pub fn query_status() -> Result<RegistrationStatus, String> {
     let registration = ProviderRegistration::new(PathBuf::new())?;
@@ -135,6 +195,27 @@ pub fn query_status() -> Result<RegistrationStatus, String> {
     Ok(RegistrationStatus::Installed {
         dll_path,
         threading_model,
+    })
+}
+
+/// 执行只读健康检查。
+pub fn health_check() -> Result<HealthReport, String> {
+    let registration = ProviderRegistration::new(PathBuf::new())?;
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let enum_registered = hklm
+        .open_subkey(registration.credential_provider_key())
+        .is_ok();
+    let status = query_status()?;
+    let dll_exists = match &status {
+        RegistrationStatus::Installed { dll_path, .. } => PathBuf::from(dll_path).is_file(),
+        RegistrationStatus::NotInstalled => false,
+    };
+
+    Ok(HealthReport {
+        status,
+        enum_registered,
+        dll_exists,
+        runtime_dirs: runtime_dirs_status(),
     })
 }
 

@@ -144,11 +144,11 @@
 - [x] `register_tool install` 写入 Credential Provider 注册表项。
 - [x] `register_tool uninstall` 删除注册表项。
 - [ ] 注册 helper 路径。
-- [ ] 初始化 `C:\ProgramData\rdp_auth` 目录。
-- [ ] 初始化日志目录。
-- [ ] 提供健康检查命令。
-- [ ] 提供应急禁用命令。
-- [ ] 编写 VM 测试和恢复文档。
+- [x] 初始化 `C:\ProgramData\rdp_auth` 目录。
+- [x] 初始化日志目录。
+- [x] 提供健康检查命令。
+- [x] 提供应急禁用命令。
+- [x] 编写 VM 测试和恢复文档。
 - [ ] 中文注释解释每个注册表项的作用和删除风险。
 
 ## 阶段 11：测试计划

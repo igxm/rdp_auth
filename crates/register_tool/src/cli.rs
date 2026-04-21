@@ -17,6 +17,12 @@ pub enum Command {
     Uninstall,
     /// 查询当前注册状态。
     Status,
+    /// 检查注册状态、DLL 路径和运行目录。
+    Health,
+    /// 应急禁用 LogonUI 枚举入口，但保留 COM 注册信息。
+    Disable,
+    /// 重新启用 LogonUI 枚举入口。
+    Enable,
     /// 打印帮助。
     Help,
 }
@@ -35,6 +41,9 @@ where
         "install" => parse_install(&args[1..]),
         "uninstall" => Ok(Command::Uninstall),
         "status" => Ok(Command::Status),
+        "health" => Ok(Command::Health),
+        "disable" => Ok(Command::Disable),
+        "enable" => Ok(Command::Enable),
         "-h" | "--help" | "help" => Ok(Command::Help),
         other => Err(format!("未知命令 `{other}`，请使用 --help 查看用法")),
     }
