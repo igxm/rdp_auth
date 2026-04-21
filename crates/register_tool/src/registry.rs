@@ -10,12 +10,14 @@ use winreg::RegKey;
 use winreg::enums::HKEY_LOCAL_MACHINE;
 
 use crate::dirs::{ensure_runtime_dirs, runtime_dirs_status};
-use crate::guid::provider_clsid_string;
+use crate::guid::{filter_clsid_string, provider_clsid_string};
 
 const PROVIDER_NAME: &str = "RDP Auth MFA Provider";
 const THREADING_MODEL: &str = "Apartment";
 const CREDENTIAL_PROVIDERS_ROOT: &str =
     r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers";
+const CREDENTIAL_PROVIDER_FILTERS_ROOT: &str =
+    r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Provider Filters";
 const MACHINE_CLASSES_ROOT: &str = r"SOFTWARE\Classes";
 
 /// 一次安装所需的注册信息。
@@ -23,6 +25,8 @@ const MACHINE_CLASSES_ROOT: &str = r"SOFTWARE\Classes";
 pub struct ProviderRegistration {
     /// 带花括号的 CLSID 字符串。
     pub clsid: String,
+    /// 带花括号的 Filter CLSID 字符串。
+    pub filter_clsid: String,
     /// 将写入 `InprocServer32` 默认值的 DLL 绝对路径。
     pub dll_path: PathBuf,
 }
@@ -31,6 +35,7 @@ impl ProviderRegistration {
     pub fn new(dll_path: PathBuf) -> Result<Self, String> {
         Ok(Self {
             clsid: provider_clsid_string(),
+            filter_clsid: filter_clsid_string(),
             dll_path,
         })
     }
@@ -39,12 +44,28 @@ impl ProviderRegistration {
         format!(r"{CREDENTIAL_PROVIDERS_ROOT}\{}", self.clsid)
     }
 
-    fn clsid_key(&self) -> String {
-        format!(r"{MACHINE_CLASSES_ROOT}\CLSID\{}", self.clsid)
+    fn credential_provider_filter_key(&self) -> String {
+        format!(r"{CREDENTIAL_PROVIDER_FILTERS_ROOT}\{}", self.filter_clsid)
     }
 
-    fn inproc_server_key(&self) -> String {
-        format!(r"{}\InprocServer32", self.clsid_key())
+    fn provider_clsid_key(&self) -> String {
+        self.clsid_key(&self.clsid)
+    }
+
+    fn filter_clsid_key(&self) -> String {
+        self.clsid_key(&self.filter_clsid)
+    }
+
+    fn clsid_key(&self, clsid: &str) -> String {
+        format!(r"{MACHINE_CLASSES_ROOT}\CLSID\{clsid}")
+    }
+
+    fn provider_inproc_server_key(&self) -> String {
+        format!(r"{}\InprocServer32", self.provider_clsid_key())
+    }
+
+    fn filter_inproc_server_key(&self) -> String {
+        format!(r"{}\InprocServer32", self.filter_clsid_key())
     }
 }
 
@@ -53,6 +74,7 @@ impl ProviderRegistration {
 pub struct HealthReport {
     pub status: RegistrationStatus,
     pub enum_registered: bool,
+    pub filter_registered: bool,
     pub dll_exists: bool,
     pub runtime_dirs: String,
 }
@@ -64,6 +86,15 @@ impl fmt::Display for HealthReport {
             formatter,
             "LogonUI 枚举入口: {}",
             if self.enum_registered {
+                "存在"
+            } else {
+                "缺失/已禁用"
+            }
+        )?;
+        writeln!(
+            formatter,
+            "Credential Provider Filter: {}",
+            if self.filter_registered {
                 "存在"
             } else {
                 "缺失/已禁用"
@@ -119,25 +150,49 @@ pub fn register_provider(registration: &ProviderRegistration) -> Result<(), Stri
     provider_key
         .set_value("", &PROVIDER_NAME)
         .map_err(|error| format!("写入 Provider 名称失败: {error}"))?;
+    let (filter_key, _) = hklm
+        .create_subkey(registration.credential_provider_filter_key())
+        .map_err(|error| {
+            format!("写入 Credential Provider Filter 枚举项失败，是否使用管理员运行: {error}")
+        })?;
+    filter_key
+        .set_value("", &format!("{PROVIDER_NAME} Filter"))
+        .map_err(|error| format!("写入 Filter 名称失败: {error}"))?;
 
     // COM 通过机器级 HKLM\SOFTWARE\Classes\CLSID 找到 DLL。这里不写 HKCU，避免
     // 用户级注册在 LogonUI/RDP 登录场景不可见。
-    let (clsid_key, _) = hklm
-        .create_subkey(registration.clsid_key())
-        .map_err(|error| format!("写入 COM CLSID 项失败，是否使用管理员运行: {error}"))?;
-    clsid_key
+    let (provider_clsid_key, _) = hklm
+        .create_subkey(registration.provider_clsid_key())
+        .map_err(|error| format!("写入 Provider COM CLSID 项失败，是否使用管理员运行: {error}"))?;
+    provider_clsid_key
         .set_value("", &PROVIDER_NAME)
-        .map_err(|error| format!("写入 COM 名称失败: {error}"))?;
+        .map_err(|error| format!("写入 Provider COM 名称失败: {error}"))?;
 
-    let (inproc_key, _) = hklm
-        .create_subkey(registration.inproc_server_key())
-        .map_err(|error| format!("写入 InprocServer32 项失败: {error}"))?;
-    inproc_key
+    let (provider_inproc_key, _) = hklm
+        .create_subkey(registration.provider_inproc_server_key())
+        .map_err(|error| format!("写入 Provider InprocServer32 项失败: {error}"))?;
+    provider_inproc_key
         .set_value("", &registration.dll_path.display().to_string())
-        .map_err(|error| format!("写入 DLL 路径失败: {error}"))?;
-    inproc_key
+        .map_err(|error| format!("写入 Provider DLL 路径失败: {error}"))?;
+    provider_inproc_key
         .set_value("ThreadingModel", &THREADING_MODEL)
-        .map_err(|error| format!("写入 ThreadingModel 失败: {error}"))?;
+        .map_err(|error| format!("写入 Provider ThreadingModel 失败: {error}"))?;
+
+    let (filter_clsid_key, _) = hklm
+        .create_subkey(registration.filter_clsid_key())
+        .map_err(|error| format!("写入 Filter COM CLSID 项失败，是否使用管理员运行: {error}"))?;
+    filter_clsid_key
+        .set_value("", &format!("{PROVIDER_NAME} Filter"))
+        .map_err(|error| format!("写入 Filter COM 名称失败: {error}"))?;
+    let (filter_inproc_key, _) = hklm
+        .create_subkey(registration.filter_inproc_server_key())
+        .map_err(|error| format!("写入 Filter InprocServer32 项失败: {error}"))?;
+    filter_inproc_key
+        .set_value("", &registration.dll_path.display().to_string())
+        .map_err(|error| format!("写入 Filter DLL 路径失败: {error}"))?;
+    filter_inproc_key
+        .set_value("ThreadingModel", &THREADING_MODEL)
+        .map_err(|error| format!("写入 Filter ThreadingModel 失败: {error}"))?;
 
     Ok(())
 }
@@ -148,7 +203,9 @@ pub fn unregister_provider() -> Result<(), String> {
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
 
     delete_subkey_tree_if_exists(&hklm, &registration.credential_provider_key())?;
-    delete_subkey_tree_if_exists(&hklm, &registration.clsid_key())?;
+    delete_subkey_tree_if_exists(&hklm, &registration.credential_provider_filter_key())?;
+    delete_subkey_tree_if_exists(&hklm, &registration.provider_clsid_key())?;
+    delete_subkey_tree_if_exists(&hklm, &registration.filter_clsid_key())?;
     Ok(())
 }
 
@@ -159,7 +216,8 @@ pub fn unregister_provider() -> Result<(), String> {
 pub fn disable_provider() -> Result<(), String> {
     let registration = ProviderRegistration::new(PathBuf::new())?;
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    delete_subkey_tree_if_exists(&hklm, &registration.credential_provider_key())
+    delete_subkey_tree_if_exists(&hklm, &registration.credential_provider_key())?;
+    delete_subkey_tree_if_exists(&hklm, &registration.credential_provider_filter_key())
 }
 
 /// 重新启用 LogonUI 枚举入口。
@@ -167,7 +225,10 @@ pub fn enable_provider() -> Result<(), String> {
     let registration = ProviderRegistration::new(PathBuf::new())?;
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
 
-    if hklm.open_subkey(registration.inproc_server_key()).is_err() {
+    if hklm
+        .open_subkey(registration.provider_inproc_server_key())
+        .is_err()
+    {
         return Err("无法启用：COM InprocServer32 尚未注册，请先执行 install".to_owned());
     }
 
@@ -177,6 +238,12 @@ pub fn enable_provider() -> Result<(), String> {
     provider_key
         .set_value("", &PROVIDER_NAME)
         .map_err(|error| format!("写入 Provider 名称失败: {error}"))?;
+    let (filter_key, _) = hklm
+        .create_subkey(registration.credential_provider_filter_key())
+        .map_err(|error| format!("创建 Filter 枚举项失败，是否使用管理员运行: {error}"))?;
+    filter_key
+        .set_value("", &format!("{PROVIDER_NAME} Filter"))
+        .map_err(|error| format!("写入 Filter 名称失败: {error}"))?;
     Ok(())
 }
 
@@ -184,7 +251,7 @@ pub fn enable_provider() -> Result<(), String> {
 pub fn query_status() -> Result<RegistrationStatus, String> {
     let registration = ProviderRegistration::new(PathBuf::new())?;
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let Ok(inproc_key) = hklm.open_subkey(registration.inproc_server_key()) else {
+    let Ok(inproc_key) = hklm.open_subkey(registration.provider_inproc_server_key()) else {
         return Ok(RegistrationStatus::NotInstalled);
     };
 
@@ -205,6 +272,9 @@ pub fn health_check() -> Result<HealthReport, String> {
     let enum_registered = hklm
         .open_subkey(registration.credential_provider_key())
         .is_ok();
+    let filter_registered = hklm
+        .open_subkey(registration.credential_provider_filter_key())
+        .is_ok();
     let status = query_status()?;
     let dll_exists = match &status {
         RegistrationStatus::Installed { dll_path, .. } => PathBuf::from(dll_path).is_file(),
@@ -214,6 +284,7 @@ pub fn health_check() -> Result<HealthReport, String> {
     Ok(HealthReport {
         status,
         enum_registered,
+        filter_registered,
         dll_exists,
         runtime_dirs: runtime_dirs_status(),
     })

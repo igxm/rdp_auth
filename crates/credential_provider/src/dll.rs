@@ -9,8 +9,8 @@ use windows::Win32::Foundation::{CLASS_E_CLASSNOTAVAILABLE, E_POINTER, HINSTANCE
 use windows::Win32::System::Com::IClassFactory;
 use windows::core::{BOOL, GUID, HRESULT, Interface};
 
-use crate::class_factory::RdpMfaClassFactory;
-use crate::state::RDP_MFA_PROVIDER_CLSID;
+use crate::class_factory::{ComClass, RdpMfaClassFactory};
+use crate::state::{RDP_MFA_FILTER_CLSID, RDP_MFA_PROVIDER_CLSID};
 
 /// 当前 DLL 是否可以卸载。
 ///
@@ -45,11 +45,13 @@ pub extern "system" fn DllGetClassObject(
         // SAFETY: 上面已经检查 `class_id` 非空，GUID 是按值复制，不持有外部引用。
         *class_id
     };
-    if requested_class != RDP_MFA_PROVIDER_CLSID {
-        return CLASS_E_CLASSNOTAVAILABLE;
-    }
+    let class = match requested_class {
+        RDP_MFA_PROVIDER_CLSID => ComClass::Provider,
+        RDP_MFA_FILTER_CLSID => ComClass::Filter,
+        _ => return CLASS_E_CLASSNOTAVAILABLE,
+    };
 
-    let factory: IClassFactory = RdpMfaClassFactory.into();
+    let factory: IClassFactory = RdpMfaClassFactory::new(class).into();
     unsafe {
         // SAFETY: `factory` 是刚创建的有效 COM 对象；`query` 会 AddRef 输出接口。
         factory.query(interface_id, object)

@@ -34,7 +34,8 @@ fn run() -> Result<(), String> {
             let registration = ProviderRegistration::new(dll_path)?;
             register_provider(&registration)?;
             print_line("已注册 RDP 二次认证 Credential Provider");
-            print_line(&format!("CLSID: {}", registration.clsid));
+            print_line(&format!("Provider CLSID: {}", registration.clsid));
+            print_line(&format!("Filter CLSID: {}", registration.filter_clsid));
             print_line(&format!("DLL: {}", registration.dll_path.display()));
         }
         Command::Uninstall => {

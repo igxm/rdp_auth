@@ -131,10 +131,10 @@
 
 ## 阶段 9：防绕过 Credential Provider Filter
 
-- [ ] 创建 `credential_provider_filter` crate。
-- [ ] 实现 `ICredentialProviderFilter`。
-- [ ] 初始版本只记录系统 Provider 枚举情况，不隐藏任何 Provider。
-- [ ] 在测试稳定后，仅在 RDP 场景和策略开启时隐藏默认密码 Provider。
+- [x] 创建 `credential_provider_filter` crate。（当前实现为同 DLL 内 `filter` 模块，避免额外 DLL 注册和部署）
+- [x] 实现 `ICredentialProviderFilter`。
+- [x] 初始版本只记录系统 Provider 枚举情况，不隐藏任何 Provider。（已进入拦截验证阶段：仅在本 Provider 同时存在时隐藏其他 Provider）
+- [x] 在测试稳定后，仅在 RDP 场景和策略开启时隐藏默认密码 Provider。（当前限制在 LOGON/UNLOCK，且缺少本 Provider 时不隐藏其他 Provider）
 - [ ] 增加注册表应急开关，例如 `DisableMfa = 1`。
 - [ ] 增加安全模式 / 离线恢复文档。
 - [ ] 中文注释解释过滤条件，避免维护人员误改导致无法登录。

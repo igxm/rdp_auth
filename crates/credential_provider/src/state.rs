@@ -16,6 +16,12 @@ use crate::serialization::InboundSerialization;
 /// 这个值一旦发布就不应随意修改，否则升级时会出现旧 Provider 残留和新 Provider 并存。
 pub const RDP_MFA_PROVIDER_CLSID: GUID = GUID::from_u128(0x92d2cf8d_8e19_49d2_9be3_3f7d9de8c2a1);
 
+/// 当前 Credential Provider Filter 的 CLSID。
+///
+/// Filter 和 Provider 放在同一个 DLL，但必须使用不同 CLSID 注册。Filter 负责隐藏系统
+/// 默认 Provider，强制 RDP/NLA 凭证先进入我们的二次认证 Tile。
+pub const RDP_MFA_FILTER_CLSID: GUID = GUID::from_u128(0x15e6a4c5_21f7_4f8c_a805_a3c3b2d0a8b2);
+
 /// Credential Provider 内部状态。
 #[derive(Debug, Clone)]
 pub struct CredentialProviderState {

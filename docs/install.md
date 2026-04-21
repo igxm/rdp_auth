@@ -15,6 +15,7 @@ cargo build --release -p register_tool
 如果你已经进入 `target\release` 目录，命令应改成：
 
 ```powershell
+.\register_tool.exe uninstall
 .\register_tool.exe install --dll .\credential_provider.dll
 .\register_tool.exe status
 .\register_tool.exe health
@@ -25,7 +26,9 @@ cargo build --release -p register_tool
 安装会写入两个机器级注册表位置：
 
 - `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{CLSID}`
+- `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Provider Filters\{FILTER_CLSID}`
 - `HKLM\SOFTWARE\Classes\CLSID\{CLSID}\InprocServer32`
+- `HKLM\SOFTWARE\Classes\CLSID\{FILTER_CLSID}\InprocServer32`
 
 这里明确写 `HKLM\SOFTWARE\Classes`，而不是用户级注册，原因是 LogonUI/RDP 登录阶段需要机器级 COM 注册。
 
@@ -35,6 +38,14 @@ cargo build --release -p register_tool
 .\target\release\register_tool.exe status
 .\target\release\register_tool.exe health
 ```
+
+`health` 里应同时看到：
+
+- `LogonUI 枚举入口: 存在`
+- `Credential Provider Filter: 存在`
+- `DLL 文件: 存在`
+
+如果 Filter 缺失，RDP/NLA 凭证仍可能被系统默认 Password Provider 自动消费，表现就是能看到 `RDP 二次认证` Tile，但不会停留，凭证通过后直接进入桌面。
 
 ## 卸载 Credential Provider
 
@@ -52,7 +63,7 @@ cargo build --release -p register_tool
 .\target\release\register_tool.exe disable
 ```
 
-`disable` 只删除 LogonUI 枚举入口，保留 COM 注册信息，方便继续用 `health` 排查 DLL 路径。
+`disable` 会删除 LogonUI Provider 和 Filter 的枚举入口，保留 COM 注册信息，方便继续用 `health` 排查 DLL 路径。
 
 确认问题解决后，可以重新启用：
 

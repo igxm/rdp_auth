@@ -3,11 +3,19 @@
 //! Windows Credential Provider 注册表路径使用带花括号的大写 CLSID。这个模块只负责格式化，
 //! 避免各处手写字符串时出现大小写或分组错误。
 
-use credential_provider::RDP_MFA_PROVIDER_CLSID;
+use credential_provider::{RDP_MFA_FILTER_CLSID, RDP_MFA_PROVIDER_CLSID};
 
 /// 当前 Provider 的 CLSID 字符串，格式为 `{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}`。
 pub fn provider_clsid_string() -> String {
-    let guid = RDP_MFA_PROVIDER_CLSID;
+    format_guid(RDP_MFA_PROVIDER_CLSID)
+}
+
+/// 当前 Filter 的 CLSID 字符串，格式为 `{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}`。
+pub fn filter_clsid_string() -> String {
+    format_guid(RDP_MFA_FILTER_CLSID)
+}
+
+fn format_guid(guid: windows_core::GUID) -> String {
     format!(
         "{{{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}}}",
         guid.data1,
@@ -34,5 +42,10 @@ mod tests {
         assert!(clsid.starts_with('{'));
         assert!(clsid.ends_with('}'));
         assert_eq!(clsid.len(), 38);
+    }
+
+    #[test]
+    fn provider_and_filter_clsids_are_different() {
+        assert_ne!(provider_clsid_string(), super::filter_clsid_string());
     }
 }

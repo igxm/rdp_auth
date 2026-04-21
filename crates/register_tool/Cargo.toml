@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 credential_provider = { path = "../credential_provider" }
+windows-core = "0.62.2"
 winreg = "0.56.0"
 
 [[bin]]

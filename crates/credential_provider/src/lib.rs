@@ -8,10 +8,11 @@ mod class_factory;
 mod credential;
 mod dll;
 mod fields;
+mod filter;
 mod memory;
 mod provider;
 mod serialization;
 mod state;
 
 pub use dll::{DllCanUnloadNow, DllGetClassObject, DllMain};
-pub use state::{CredentialProviderState, RDP_MFA_PROVIDER_CLSID};
+pub use state::{CredentialProviderState, RDP_MFA_FILTER_CLSID, RDP_MFA_PROVIDER_CLSID};
