@@ -60,9 +60,9 @@ target\debug\register_tool.exe status
 - `import` 失败时不能覆盖原有有效 `.enc` 文件。
 - 旧版 `reginfo.ini` 迁移成功后应写入统一加密配置，运行期不再读取明文旧文件。
 
-## Windows Server 2008 R2 VM 测试
+## Windows Server 2008 R2
 
-在 Windows Server 2008 R2 SP1 64 位 VM 中：
+当前任务目标不考虑 Windows Server 2008 R2 兼容，因此本节不作为当前测试要求。未来如恢复该兼容目标，再在 Windows Server 2008 R2 SP1 64 位 VM 中执行：
 
 1. 记录补丁状态、RDP/NLA 状态和 VC++ 运行时状态。
 2. 执行安装工具生成 `.enc` 配置。

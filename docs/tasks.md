@@ -12,7 +12,7 @@
 
 ## 当前优先级
 
-1. 先用 VM 验证现有 RDP pass-through 主链路、缺失 serialization 断开保护、MFA 超时断开和短信倒计时 UI 刷新，确认不会误断首次登录；如果要兼容 Windows Server 2008 R2，先做专门兼容性冒烟验证，不要等真实 API 接入后再回头排查系统差异。
+1. 先用 VM 验证现有 RDP pass-through 主链路、缺失 serialization 断开保护、MFA 超时断开和短信倒计时 UI 刷新，确认不会误断首次登录；当前任务目标暂不考虑 Windows Server 2008 R2 兼容。
 2. 再把超时、缺失 serialization 等待窗口、短信重新发送时间、helper IPC 超时、session 状态 TTL 等迁移到统一 TOML 配置，并让 `register_tool health` 能显示当前生效值。
 3. 然后实现 helper / IPC 的 mock 服务和 helper 内存态 session 跟踪，把 CP 内的 mock 逻辑逐步迁移到 helper，保持 Credential Provider DLL 轻量。
 4. 在 helper/IPC 稳定之后接入真实 API、远程配置、手机号文件、审计日志和公网/内网 IP 采集。
@@ -23,7 +23,7 @@
 - **A级：已完成或只需复测确认。** Workspace 骨架、Credential Provider 加载、RDP inbound serialization 接收、Kerberos interactive/unlock 重新打包、mock MFA、MFA 超时断开、缺失 serialization 快速断开、短信按钮倒计时刷新等已经有实现记录，后续重点是 VM 回归和日志补齐。
 - **B级：可直接开发，风险较低。** 统一 TOML 配置、配置默认值、`register_tool health` 展示、`auth_core` 手机号校验、日志/错误处理依赖、配置解析单元测试、文档更新等不依赖 Windows 登录链路，可先在普通进程和单元测试里稳定。
 - **C级：依赖 helper/IPC 前置。** Windows session notification、helper 内存态 `SessionAuthState`、锁屏后立即断开策略、真实短信/二次密码 API、手机号文件读取、远程配置、审计上下文、公网/内网 IP 采集都应放在 helper 内完成；在 helper mock 服务可用前，Credential Provider 不应直接承接这些复杂逻辑。
-- **D级：高风险，必须 VM 验证后定版。** Credential Provider Filter 隐藏默认 Provider、`CPUS_LOGON` 与 `CPUS_UNLOCK_WORKSTATION` 差异、RDP/NLA serialization 慢到窗口、跨进程 session 状态判断、Windows Server 2008 R2 兼容、LogonUI 字段刷新线程模型等都属于系统行为相关任务，不能只靠代码审查判断可行。
+- **D级：高风险，必须 VM 验证后定版。** Credential Provider Filter 隐藏默认 Provider、`CPUS_LOGON` 与 `CPUS_UNLOCK_WORKSTATION` 差异、RDP/NLA serialization 慢到窗口、跨进程 session 状态判断、LogonUI 字段刷新线程模型等都属于系统行为相关任务，不能只靠代码审查判断可行；Windows Server 2008 R2 兼容暂不纳入当前目标。
 - **暂缓项。** 真实 API、微信扫码、远程配置自动更新、复杂审计上报在 RDP 主链路、helper/IPC 和 VM 兼容矩阵稳定前不作为当前收敛目标，避免把问题定位范围扩大。
 
 ## 配置与文件读取边界
@@ -75,7 +75,7 @@
 
 ## Windows Server 2008 R2 兼容方案
 
-结论：Windows Server 2008 R2 可以作为兼容目标分析和验证，但不能在未跑通专门 VM 矩阵前声明支持。该系统属于 NT 6.1 时代，Credential Provider、RDP/NLA、RDS 会话 API 基础能力存在，但现代 Rust/MSVC 运行时、Windows API set、TLS/Schannel、依赖 crate 的最低系统版本都可能成为真实阻断点。兼容工作必须拆成独立轨道，避免影响主线系统上的稳定实现。
+当前任务目标不考虑 Windows Server 2008 R2 兼容，也不把 2008 R2 作为当前开发、测试、验收或阻塞项。以下内容仅作为未来如需扩展兼容时的参考，不在当前阶段执行。该系统属于 NT 6.1 时代，Credential Provider、RDP/NLA、RDS 会话 API 基础能力存在，但现代 Rust/MSVC 运行时、Windows API set、TLS/Schannel、依赖 crate 的最低系统版本都可能成为真实阻断点。
 
 - [ ] 定义支持级别：主线优先支持当前开发 VM 和较新的 Windows Server；Windows Server 2008 R2 初始标记为“待验证/实验性兼容”，只有专门 VM 测试全部通过后才能写入安装文档的支持矩阵。
 - [ ] 准备 Windows Server 2008 R2 SP1 64 位 VM，记录系统版本、补丁状态、是否启用 RDP/NLA、是否启用 TLS 1.2、是否安装 VC++ 运行时，并建立可回滚快照。
@@ -214,7 +214,7 @@
 - [x] 将本地配置长期落盘路径调整为 AES 加密文件，例如 `C:\ProgramData\rdp_auth\config\rdp_auth.toml.enc`；TOML 仅作为导入/导出的明文交换格式。
 - [x] 配置加密方式改为 AES-256-GCM，文件内容保存 `nonce + ciphertext`，不再使用 envelope。
 - [x] 首次安装时根据机器信息生成唯一机器码，写入注册表 `MachineCode`，并使用该机器码派生 AES-256 key。
-- [ ] Windows Server 2008 R2 兼容验证必须覆盖机器码生成、注册表写入、AES 加密/解密和重启后读取。
+- [ ] Windows Server 2008 R2 兼容验证暂不纳入当前任务目标；如未来恢复兼容目标，再覆盖机器码生成、注册表写入、AES 加密/解密和重启后读取。
 - [ ] 注册表只保留 Windows 集成所必需的机器级信息：Provider/Filter COM 注册、LogonUI 枚举入口、DLL 路径、helper 路径、配置文件路径、`MachineCode`、`DisableMfa` 应急开关和必要的 `EnableRdpMfa` / `EnableConsoleMfa` 登录入口策略；认证方式、API、手机号、超时、审计、远程配置等业务配置不得散落写入注册表。
 - [ ] `auth_config` 读取注册表 `SOFTWARE\rdp_auth\config` 中的最小引导项，例如 `ConfigPath`、`HelperPath`、`DisableMfa`、`EnableRdpMfa`、`EnableConsoleMfa`，再读取统一配置文件。
 - [x] `auth_config` 按职责拆分模块：`login_policy` 只处理注册表最小引导项，`file_config` 只处理配置路径/文件读写/TOML 解析，`schema` 只处理配置结构和默认值归一化，`legacy` 只保留旧配置迁移占位。
@@ -382,7 +382,7 @@
 - [ ] VM 测试：helper 重启后内存状态丢失时，系统仍按首次登录等待窗口处理，不得放行孤立 MFA。
 - [ ] VM 测试：session logoff/disconnect 后 helper 清理状态，后续新 session 不得复用旧认证标记。
 - [ ] VM 测试：短信按钮点击后逐秒更新 `重新发送(n)`，归零后恢复 `发送验证码` 并可再次点击。
-- [ ] VM 测试：Windows Server 2008 R2 上机器码可由安装工具写入注册表，AES 加密配置可由 helper 读取，并能在重启后继续解密。
+- [ ] VM 测试：Windows Server 2008 R2 暂不纳入当前测试目标；如未来恢复兼容目标，再验证机器码注册表写入、AES 加密配置读取和重启后解密。
 - [ ] VM 测试：服务端不可达时默认拒绝登录。
 - [x] VM 测试：系统默认 Provider 未隐藏时可恢复登录。
 - [x] VM 测试：Filter 启用后无法绕过 MFA。（当前验证为无法绕过 Provider，真实 MFA 接入后需复测）
