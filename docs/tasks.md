@@ -34,7 +34,7 @@
 - [x] 明确边界：Credential Provider DLL 不直接读取手机号文件、远程配置缓存、`reginfo.ini` 或复杂策略文件，避免 LogonUI 进程被磁盘 IO、权限、杀毒软件或配置解析错误拖垮。
 - [x] 明确边界：Credential Provider DLL 只消费 helper 通过 IPC 返回的策略快照，例如可用认证方式、手机号显示值、手机号是否可编辑、超时时间和错误提示。
 - [ ] helper 负责读取和校验手机号文件、远程配置缓存、`reginfo.ini`、公网 IP endpoint、认证方式开关和超时策略，并把结果转换为 CP 可直接渲染的脱敏策略。
-- [ ] helper 下发给 CP 的手机号策略只允许包含脱敏展示值和是否可编辑标记；真实手机号仅在 helper 内存中用于发送短信请求，不回传给 CP 日志。
+- [x] helper 下发给 CP 的手机号策略只允许包含脱敏展示值和是否可编辑标记；真实手机号仅在 helper 内存中用于发送短信请求，不回传给 CP 日志。
 - [ ] CP 与 helper IPC 增加 `get_policy_snapshot` 或等效请求，CP 初始化和刷新 UI 时通过该请求获取认证方式、手机号来源、脱敏手机号、字段可编辑状态和超时配置。
 
 ## 日志与错误处理技术选型
@@ -191,11 +191,11 @@
 - [x] `auth_ipc` 增加 `clear_session_state` 请求：Credential Provider 或 register_tool 可请求清理指定 session 状态，用于断开、卸载或异常恢复。
 - [ ] 所有 session 状态 IPC 必须设置极短超时；helper 不可用、超时或返回非法响应时，Credential Provider 回退到 fail closed 策略，不得放行。
 - [x] IPC 响应只返回布尔值、状态码、TTL/时间戳等非敏感信息，不返回用户标识、手机号、密码或原始凭证材料。
-- [ ] 支持 `get_policy_snapshot` 请求：helper 读取本地/远程配置和必要文件后，返回 CP 可渲染的策略快照，包括认证方式列表、手机号来源、脱敏手机号、手机号字段是否可编辑、超时配置和用户可见提示。
+- [x] 支持 `get_policy_snapshot` 请求：helper 读取本地配置和必要文件后，返回 CP 可渲染的脱敏策略快照，包括认证方式列表、手机号来源、脱敏手机号、手机号字段是否可编辑和超时配置；远程配置和用户可见提示待后续扩展协议字段。
 - [ ] 支持 `send_sms` 请求。
 - [ ] `send_sms` 请求携带手机号来源标记；文件读取手机号模式下 CP 不传真实手机号，helper 使用自己读取并校验过的真实手机号；手动输入模式下 CP 只传用户输入手机号。
 - [ ] helper 对手机号再次执行格式校验，禁止只依赖 Credential Provider UI 校验；手机号非法时返回可展示错误且不调用真实短信 API。
-- [ ] helper 实现手机号文件读取和校验：读取 `PhoneFilePath`，校验 `^1[3-9]\d{9}$`，只向 CP 返回脱敏手机号和不可编辑标记，日志不得记录完整手机号。
+- [x] helper 实现手机号文件读取和校验：读取 `PhoneFilePath`，校验 `^1[3-9]\d{9}$`，只向 CP 返回脱敏手机号和不可编辑标记，日志不得记录完整手机号。
 - [ ] helper 为每次 MFA 请求生成审计上下文 `AuditContext`：包含 request_id、session_id、client_ip、host_public_ip、host_private_ips、host_uuid 和认证方式。
 - [ ] helper 采集 RDP 连接用户 IP：优先按当前 Windows session 查询客户端地址；采集失败时填充 `unknown`，并记录脱敏诊断原因。
 - [ ] helper 采集本机内网 IP 列表：枚举活动网卡，过滤 loopback、link-local、未启用网卡和明显无效地址，支持多网卡多 IP。
@@ -373,6 +373,7 @@
 - [x] 单元测试：手机号校验规则，合法手机号满足 `^1[3-9]\d{9}$`，非法手机号被拒绝。
 - [x] 单元测试：手机号脱敏规则，`13812348888` 显示为 `138****8888`，非法手机号显示为安全占位文案。
 - [ ] 单元测试：helper 文件读取手机号模式会让 CP 禁用手机号输入框，并且 UI 只显示脱敏手机号。
+- [x] 单元测试：helper 策略快照在文件手机号模式下只返回脱敏手机号，且手机号字段不可编辑。
 - [ ] 单元测试：手动输入手机号模式下，手机号不合法时禁止发送验证码并显示错误提示。
 - [x] 单元测试：`get_policy_snapshot` 不包含文件模式真实手机号，只包含脱敏手机号、字段可编辑状态和策略来源。
 - [ ] 单元测试：本机内网 IP 枚举会过滤 loopback、link-local、未启用网卡，并保留多网卡有效地址。

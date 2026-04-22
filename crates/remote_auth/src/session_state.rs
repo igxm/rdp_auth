@@ -15,6 +15,7 @@ pub struct SessionAuthRecord {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum SessionEvent {
     Authenticated,
     Lock,
@@ -61,6 +62,7 @@ impl SessionAuthState {
         Some(self.ttl.saturating_sub(elapsed))
     }
 
+    #[allow(dead_code)]
     pub fn record_event(&mut self, session_id: u32, event: SessionEvent) {
         match event {
             SessionEvent::Disconnect | SessionEvent::Logoff | SessionEvent::Cleared => {
