@@ -3,6 +3,7 @@
 //! 后续它会作为 Credential Provider DLL 的外部 helper 运行，负责注册表配置、网络 API、
 //! 日志和命名管道。把这些逻辑移出 DLL，是为了让 LogonUI 进程保持轻量、可恢复。
 
+mod mfa;
 mod policy;
 mod router;
 mod session_state;
@@ -22,7 +23,7 @@ fn main() {
         IpcRequest::GetPolicySnapshot { session_id: 0 },
         &mut sessions,
         Instant::now(),
-        policy::load_policy_snapshot_from_disk(),
+        policy::load_policy_context_from_disk(),
     );
     let response = IpcResponse::success("remote_auth helper 骨架已启动");
     println!("{}", response.message);

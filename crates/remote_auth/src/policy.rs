@@ -8,40 +8,58 @@ use auth_config::{AppConfig, PhoneSource};
 use auth_core::{is_valid_default_phone_number, mask_phone_number};
 use auth_ipc::{PhoneInputSource, PolicySnapshot};
 
-pub fn load_policy_snapshot_from_disk() -> PolicySnapshot {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PolicyContext {
+    pub snapshot: PolicySnapshot,
+    pub configured_phone: Option<String>,
+}
+
+pub fn load_policy_context_from_disk() -> PolicyContext {
     let config = auth_config::load_app_config();
     let configured_phone = match config.phone.source {
         PhoneSource::Input => None,
         PhoneSource::File => fs::read_to_string(&config.phone.file_path).ok(),
     };
 
-    policy_snapshot_from_config(&config, configured_phone.as_deref())
+    policy_context_from_config(&config, configured_phone.as_deref())
 }
 
-pub fn policy_snapshot_from_config(
+pub fn policy_context_from_config(
     config: &AppConfig,
     configured_phone: Option<&str>,
-) -> PolicySnapshot {
+) -> PolicyContext {
     let phone_source = match config.phone.source {
         PhoneSource::Input => PhoneInputSource::ManualInput,
         PhoneSource::File => PhoneInputSource::ConfiguredFile,
     };
-    let masked_phone = match config.phone.source {
+    let valid_configured_phone = match config.phone.source {
         PhoneSource::Input => None,
         PhoneSource::File => configured_phone
             .map(str::trim)
             .filter(|phone| is_valid_default_phone_number(phone))
-            .map(mask_phone_number),
+            .map(ToOwned::to_owned),
     };
+    let masked_phone = valid_configured_phone.as_deref().map(mask_phone_number);
 
-    PolicySnapshot {
-        auth_methods: config.auth_methods.enabled_methods(),
-        phone_source,
-        masked_phone,
-        phone_editable: matches!(config.phone.source, PhoneSource::Input),
-        mfa_timeout_seconds: config.mfa.timeout_seconds,
-        sms_resend_seconds: config.mfa.sms_resend_seconds,
+    PolicyContext {
+        snapshot: PolicySnapshot {
+            auth_methods: config.auth_methods.enabled_methods(),
+            phone_source,
+            masked_phone,
+            phone_editable: matches!(config.phone.source, PhoneSource::Input),
+            mfa_timeout_seconds: config.mfa.timeout_seconds,
+            sms_resend_seconds: config.mfa.sms_resend_seconds,
+        },
+        configured_phone: valid_configured_phone,
     }
+}
+
+#[cfg(test)]
+pub fn policy_snapshot_from_config(
+    config: &AppConfig,
+    configured_phone: Option<&str>,
+) -> PolicySnapshot {
+    policy_context_from_config(config, configured_phone).snapshot
 }
 
 #[cfg(test)]
