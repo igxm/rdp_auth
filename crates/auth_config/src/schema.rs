@@ -92,6 +92,31 @@ impl AuthMethodsConfig {
     }
 }
 
+impl fmt::Display for AuthMethodsConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(
+            formatter,
+            "启用认证方式: {}",
+            self.enabled_methods()
+                .iter()
+                .map(|method| match method {
+                    AuthMethod::PhoneCode => "短信验证码",
+                    AuthMethod::SecondPassword => "二次密码",
+                    AuthMethod::Wechat => "微信扫码",
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        )?;
+        writeln!(formatter, "短信验证码: {}", enabled_label(self.phone_code))?;
+        writeln!(
+            formatter,
+            "二次密码: {}",
+            enabled_label(self.second_password)
+        )?;
+        write!(formatter, "微信扫码: {}", enabled_label(self.wechat))
+    }
+}
+
 /// 手机号来源。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -340,6 +365,10 @@ fn bounded_u32(value: u32, min: u32, max: u32, default_value: u32) -> u32 {
     }
 }
 
+fn enabled_label(value: bool) -> &'static str {
+    if value { "启用" } else { "关闭" }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{AppConfig, AuthMethodsConfig, MfaConfig, PhoneSource};
@@ -409,6 +438,21 @@ wechat = false
             config.normalized().auth_methods.enabled_methods(),
             vec![AuthMethod::SecondPassword]
         );
+    }
+
+    #[test]
+    fn auth_methods_display_lists_enabled_methods() {
+        let config = AuthMethodsConfig {
+            phone_code: false,
+            second_password: true,
+            wechat: true,
+        };
+        let display = config.to_string();
+
+        assert!(display.contains("启用认证方式: 二次密码, 微信扫码"));
+        assert!(display.contains("短信验证码: 关闭"));
+        assert!(display.contains("二次密码: 启用"));
+        assert!(display.contains("微信扫码: 启用"));
     }
 
     #[test]

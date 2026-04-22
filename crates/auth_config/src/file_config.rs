@@ -65,6 +65,7 @@ impl fmt::Display for ConfigSnapshot {
         if let Some(error) = &self.parse_error {
             writeln!(formatter, "配置读取: 失败，已回退默认值: {error}")?;
         }
+        writeln!(formatter, "{}", self.config.auth_methods)?;
         write!(formatter, "{}", self.config.mfa)
     }
 }
@@ -315,6 +316,23 @@ timeout_seconds = 180
         assert!(normalized.contains("schema_version = 1"));
         assert!(normalized.contains("timeout_seconds = 180"));
         assert!(normalized.contains("sms_resend_seconds = 60"));
+    }
+
+    #[test]
+    fn config_snapshot_display_includes_auth_summary() {
+        let snapshot = super::ConfigSnapshot {
+            path: "C:\\ProgramData\\rdp_auth\\config\\rdp_auth.toml.enc".into(),
+            exists: true,
+            modified_unix_seconds: Some(1),
+            encrypted: true,
+            encryption: None,
+            parse_error: None,
+            config: Default::default(),
+        };
+        let display = snapshot.to_string();
+
+        assert!(display.contains("启用认证方式: 短信验证码, 二次密码"));
+        assert!(display.contains("MFA"));
     }
 
     #[test]

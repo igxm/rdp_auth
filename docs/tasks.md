@@ -333,7 +333,7 @@
 - [ ] `register_tool install` 只把核心 helper 注册为后台进程/服务；Tauri GUI 如需安装，作为独立可选组件登记，不影响 CP/helper 注册成功。
 - [ ] `register_tool health` 检查 helper 是否可启动/可连通、命名管道是否可用、session notification 是否初始化成功。
 - [ ] `register_tool health` 显示 Tauri 管理 GUI 是否安装、安装路径和 WebView2/runtime 检查结果；GUI 未安装不得视为登录链路故障。
-- [ ] `register_tool status` / `health` 显示当前启用的认证方式，便于排查配置文件是否生效。
+- [x] `register_tool status` / `health` 显示当前启用的认证方式，便于排查配置文件是否生效。
 - [x] `register_tool status` / `health` 显示当前 MFA 超时、缺失 serialization 等待窗口、短信重新发送时间和配置来源，便于排查 VM 行为。
 - [x] `register_tool status` / `health` 显示 helper session 状态策略：状态 TTL、首次登录等待窗口、已认证会话短等待窗口和 IPC 超时。
 - [x] 初始化 `C:\ProgramData\rdp_auth` 目录。
