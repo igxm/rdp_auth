@@ -17,6 +17,7 @@ dependencies = [
  "auth_core",
  "serde",
  "toml",
+ "windows",
  "winreg",
 ]
 

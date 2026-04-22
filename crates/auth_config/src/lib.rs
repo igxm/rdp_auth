@@ -7,6 +7,7 @@
 mod file_config;
 mod legacy;
 mod login_policy;
+mod protected_file;
 mod schema;
 
 pub use file_config::{
@@ -17,5 +18,9 @@ pub use legacy::{LocalConfig, load_local_config};
 pub use login_policy::{
     LoginPolicy, POLICY_REGISTRY_PATH, VALUE_CONFIG_PATH, VALUE_DISABLE_MFA,
     VALUE_ENABLE_CONSOLE_MFA, VALUE_ENABLE_RDP_MFA, ensure_default_login_policy, load_login_policy,
+};
+pub use protected_file::{
+    ConfigCipher, ConfigEnvelopeMetadata, ConfigProtectionError, DpapiMachineConfigCipher,
+    PlaintextFormat, protect_config_bytes, unprotect_config_bytes,
 };
 pub use schema::{AppConfig, MfaConfig};

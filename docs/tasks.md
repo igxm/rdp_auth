@@ -211,9 +211,9 @@
 - [x] 确定配置集中化方案，详见 `docs/configuration.md`：本地人工维护配置使用 TOML，远程配置缓存可使用 JSON，注册表只保留最小引导项和应急开关。
 - [x] 配置采用单一文件为主，运行期推荐加密路径为 `C:\ProgramData\rdp_auth\config\rdp_auth.toml.enc`，TOML 只作为导入/导出的明文交换格式；如服务端下发天然是 JSON，可在远程缓存层保留 JSON 内存格式，但远程缓存落盘也必须加密。
 - [ ] 所有业务配置文件必须加密落盘：本地统一配置、远程配置缓存、手机号文件、旧版 `reginfo.ini` 迁移结果和后续新增认证/API 配置都不得以明文作为运行期配置文件。
-- [ ] 将本地配置长期落盘路径调整为加密 envelope，例如 `C:\ProgramData\rdp_auth\config\rdp_auth.toml.enc`；TOML 仅作为导入/导出的明文交换格式。
-- [ ] 设计统一加密 envelope：包含魔数、schema version、算法标识、明文格式、创建时间、密文长度和密文，便于后续升级算法和兼容旧文件。
-- [ ] Windows 默认使用 DPAPI 机器级加密保护配置文件，优先调用 `CryptProtectData` / `CryptUnprotectData`；不得把密钥、API token 或手机号写入注册表。
+- [x] 将本地配置长期落盘路径调整为加密 envelope，例如 `C:\ProgramData\rdp_auth\config\rdp_auth.toml.enc`；TOML 仅作为导入/导出的明文交换格式。
+- [x] 设计统一加密 envelope：包含魔数、schema version、算法标识、明文格式、创建时间、密文长度和密文，便于后续升级算法和兼容旧文件。
+- [x] Windows 默认使用 DPAPI 机器级加密保护配置文件，优先调用 `CryptProtectData` / `CryptUnprotectData`；不得把密钥、API token 或手机号写入注册表。
 - [ ] Windows Server 2008 R2 兼容验证必须覆盖 DPAPI 机器级加密/解密；如果需要降级为本机密钥文件，必须先设计 ACL、轮换、备份和审计策略。
 - [ ] 注册表只保留 Windows 集成所必需的机器级信息：Provider/Filter COM 注册、LogonUI 枚举入口、DLL 路径、helper 路径、配置文件路径、`DisableMfa` 应急开关和必要的 `EnableRdpMfa` / `EnableConsoleMfa` 登录入口策略；认证方式、API、手机号、超时、审计、远程配置等业务配置不得散落写入注册表。
 - [ ] `auth_config` 读取注册表 `SOFTWARE\rdp_auth\config` 中的最小引导项，例如 `ConfigPath`、`HelperPath`、`DisableMfa`、`EnableRdpMfa`、`EnableConsoleMfa`，再读取统一配置文件。
@@ -246,11 +246,11 @@
 - [ ] `ClientIp` 不再作为静态配置优先来源；helper 应优先从当前 RDP session 动态采集，配置值仅作为采集失败时的显式 fallback。
 - [ ] helper 读取 `r_ip_range`、`r_time_range`、`r_region` 等策略配置并在本地或服务端策略判断中使用，CP 只接收最终允许/拒绝或可展示策略。
 - [ ] helper 支持兼容读取旧版 `reginfo.ini`，只作为迁移来源或显式 fallback；成功迁移后写入统一加密配置文件，CP 不直接读取 `reginfo.ini`。
-- [ ] `auth_config` 增加配置解密层：先读取 envelope 并解密为内存中的 TOML/JSON，再解析为结构化配置；明文只允许短暂存在于内存。
-- [ ] `auth_config` 对解密失败、机器不匹配、envelope 版本不支持、密文损坏分别返回结构化错误，并按 fail closed/安全默认值策略处理。
+- [x] `auth_config` 增加配置解密层：先读取 envelope 并解密为内存中的 TOML/JSON，再解析为结构化配置；明文只允许短暂存在于内存。
+- [x] `auth_config` 对解密失败、机器不匹配、envelope 版本不支持、密文损坏分别返回结构化错误，并按 fail closed/安全默认值策略处理。
 - [ ] `register_tool config export` 导出明文 TOML 供管理员编辑，命令输出必须提示明文敏感和删除临时文件；导出操作需要管理员显式执行。
 - [ ] `register_tool config import` 读取明文 TOML 后立即加密写回 `.enc` 文件，已有加密配置写入前创建加密备份，不保留明文副本。
-- [ ] `register_tool health` 显示配置文件是否加密、envelope 版本、解密是否成功、配置来源和最后修改时间；不得显示配置明文内容。
+- [ ] `register_tool health` 显示配置文件是否加密、envelope 版本、解密是否成功、配置来源和最后修改时间；不得显示配置明文内容。（当前已显示加密状态、envelope 版本、算法、格式和密文长度；最后修改时间待补）
 - [ ] 配置缺失时返回结构化错误。
 - [ ] 认证方式配置缺失或非法时使用安全默认值；全部关闭时恢复默认认证方式集合。
 - [ ] helper 启动时输出脱敏诊断日志。
@@ -314,7 +314,7 @@
 - [x] 初始化 `C:\ProgramData\rdp_auth` 目录。
 - [x] 初始化日志目录。
 - [ ] 初始化远程配置缓存目录，例如 `C:\ProgramData\rdp_auth\config`。
-- [ ] `register_tool install` 默认创建加密配置文件，不创建长期明文 TOML；如果发现旧明文配置，提示迁移或自动导入后加密。
+- [ ] `register_tool install` 默认创建加密配置文件，不创建长期明文 TOML；如果发现旧明文配置，提示迁移或自动导入后加密。（当前默认新建 `.enc` 已完成，旧明文发现/迁移待补）
 - [ ] `register_tool uninstall` 不默认删除加密配置文件和加密备份，避免误删管理员配置；如新增清理参数，必须明确提示风险。
 - [x] 提供健康检查命令。
 - [x] 提供应急禁用命令。
@@ -334,9 +334,9 @@
 - [x] 单元测试：统一配置文件中的认证超时配置解析与默认值。
 - [x] 单元测试：统一配置文件中的缺失 serialization 等待窗口和短信重新发送时间解析与默认值。
 - [x] 单元测试：统一配置文件中的 helper session 状态 TTL、首次登录等待窗口、已认证会话短等待窗口和 IPC 超时解析与默认值。
-- [ ] 单元测试：配置 envelope 加密后不包含 TOML/JSON 明文字段，例如 `serveraddr`、`hostuuid`、手机号或 API 地址。
-- [ ] 单元测试：配置 envelope 解密成功后能恢复原始 TOML/JSON 并解析为结构化配置。
-- [ ] 单元测试：错误密文、错误 magic、未知 envelope 版本、截断文件和机器不匹配时返回结构化错误且不泄漏明文。
+- [x] 单元测试：配置 envelope 加密后不包含 TOML/JSON 明文字段，例如 `serveraddr`、`hostuuid`、手机号或 API 地址。
+- [x] 单元测试：配置 envelope 解密成功后能恢复原始 TOML/JSON 并解析为结构化配置。
+- [x] 单元测试：错误密文、错误 magic、未知 envelope 版本、截断文件和机器不匹配时返回结构化错误且不泄漏明文。
 - [ ] 单元测试：`register_tool config import/export` 能完成明文 TOML 与加密配置的转换，导入不会覆盖失败前的有效加密配置。
 - [ ] 单元测试：缺失 serialization 保护 generation 变化后旧定时器不会断开新登录尝试。
 - [ ] 单元测试：短信倒计时 generation 变化后旧刷新线程不会覆盖新倒计时。
