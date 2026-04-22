@@ -4,9 +4,12 @@
 //! 凭证序列化逻辑。后续新增状态时，优先判断它属于 Provider 生命周期还是 Credential
 //! Tile 生命周期，避免状态边界混乱。
 
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 use auth_core::{AuthMethod, MfaState};
+use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
+use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Shell::{CPUS_LOGON, CREDENTIAL_PROVIDER_USAGE_SCENARIO};
 use windows::core::GUID;
 
@@ -28,22 +31,87 @@ static LAST_REMOTE_SOURCE_PROVIDER: Mutex<Option<GUID>> = Mutex::new(None);
 
 /// 记录 `UpdateRemoteCredential` 重定向前的原始 Provider CLSID。
 ///
-/// Filter 和 Provider 位于同一个 DLL，通常也在同一个 LogonUI 进程内。Filter 必须把
-/// serialization 的 Provider CLSID 临时改成本项目 CLSID，LogonUI 才会把远程凭证交给
-/// 我们；但认证通过后又要恢复原始 Provider CLSID，避免系统按错误 Provider 上下文解释
-/// 原始密码序列化数据。
+/// Filter 必须把 serialization 的 Provider CLSID 临时改成本项目 CLSID，LogonUI 才会把远程凭证交给
+/// 我们；但认证通过后又要恢复原始 Provider CLSID，避免系统按错误 Provider 上下文解释原始密码序列化数据。
+///
+/// 实机 RDP 链路里 `UpdateRemoteCredential` 和后续 Provider `SetSerialization` 可能不在同一个进程内，
+/// 单纯依赖静态变量会丢失这个 CLSID。这里同时写入按 session 区分的轻量 handoff 文件；文件只保存 Provider
+/// GUID，不保存用户名、密码或 `rgbSerialization`，避免把敏感凭证材料落盘。
 pub fn remember_remote_source_provider(provider: GUID) {
     *LAST_REMOTE_SOURCE_PROVIDER
         .lock()
         .expect("remote source provider lock poisoned") = Some(provider);
+    let _ = write_remote_source_provider_handoff(provider);
 }
 
 /// 取出最近一次 RDP 远程凭证的原始 Provider CLSID。
 pub fn take_remote_source_provider() -> Option<GUID> {
-    LAST_REMOTE_SOURCE_PROVIDER
+    let memory_provider = LAST_REMOTE_SOURCE_PROVIDER
         .lock()
         .expect("remote source provider lock poisoned")
-        .take()
+        .take();
+    if memory_provider.is_some() {
+        let _ = remove_remote_source_provider_handoff();
+        return memory_provider;
+    }
+    read_remote_source_provider_handoff()
+}
+
+fn write_remote_source_provider_handoff(provider: GUID) -> std::io::Result<()> {
+    let Some(path) = remote_source_provider_handoff_path() else {
+        return Ok(());
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, format!("{:032x}", provider.to_u128()))
+}
+
+fn read_remote_source_provider_handoff() -> Option<GUID> {
+    let path = remote_source_provider_handoff_path()?;
+    let value = std::fs::read_to_string(&path).ok()?;
+    let _ = std::fs::remove_file(path);
+    u128::from_str_radix(value.trim(), 16)
+        .ok()
+        .map(GUID::from_u128)
+}
+
+fn remove_remote_source_provider_handoff() -> std::io::Result<()> {
+    let Some(path) = remote_source_provider_handoff_path() else {
+        return Ok(());
+    };
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+fn remote_source_provider_handoff_path() -> Option<PathBuf> {
+    Some(provider_handoff_dir().join(format!(
+        "remote_provider_session_{}.txt",
+        current_session_id()?
+    )))
+}
+
+#[cfg(not(test))]
+fn provider_handoff_dir() -> PathBuf {
+    PathBuf::from(r"C:\ProgramData\rdp_auth")
+}
+
+#[cfg(test)]
+fn provider_handoff_dir() -> PathBuf {
+    std::env::temp_dir().join("rdp_auth_credential_provider_tests")
+}
+
+fn current_session_id() -> Option<u32> {
+    let mut session_id = 0_u32;
+    unsafe {
+        // SAFETY: 输出指针指向当前栈变量；失败时返回 None，不使用未初始化的 session id。
+        ProcessIdToSessionId(GetCurrentProcessId(), &mut session_id)
+            .ok()
+            .map(|_| session_id)
+    }
 }
 
 /// Credential Provider 内部状态。
@@ -96,9 +164,12 @@ impl Default for CredentialProviderState {
 mod tests {
     use super::{
         CredentialProviderState, RDP_MFA_PROVIDER_CLSID, remember_remote_source_provider,
-        take_remote_source_provider,
+        take_remote_source_provider, write_remote_source_provider_handoff,
     };
+    use std::sync::Mutex;
     use windows::core::GUID;
+
+    static TEST_REMOTE_PROVIDER_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn provider_clsid_is_not_zero() {
@@ -119,9 +190,22 @@ mod tests {
 
     #[test]
     fn remembers_and_takes_remote_source_provider() {
+        let _guard = TEST_REMOTE_PROVIDER_LOCK.lock().unwrap();
         let provider = GUID::from_u128(0x11111111_2222_3333_4444_555555555555);
 
         remember_remote_source_provider(provider);
+
+        assert_eq!(take_remote_source_provider(), Some(provider));
+        assert_eq!(take_remote_source_provider(), None);
+    }
+
+    #[test]
+    fn takes_remote_source_provider_from_handoff_file_when_memory_is_empty() {
+        let _guard = TEST_REMOTE_PROVIDER_LOCK.lock().unwrap();
+        let _ = take_remote_source_provider();
+        let provider = GUID::from_u128(0x22222222_3333_4444_5555_666666666666);
+
+        write_remote_source_provider_handoff(provider).unwrap();
 
         assert_eq!(take_remote_source_provider(), Some(provider));
         assert_eq!(take_remote_source_provider(), None);

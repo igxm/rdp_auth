@@ -87,6 +87,7 @@
 - [x] 使用 mock 数据模拟认证通过情况：手机验证码 `123456`、二次密码 `mock-password`。
 - [x] 二次认证未通过时，`GetSerialization` 不返回原始凭证。
 - [x] 二次认证通过后，`GetSerialization` 返回缓存的原始凭证。
+- [x] 修复 mock MFA 通过后仍提示用户名或密码错误：Filter 记录 RDP 原始 Provider CLSID 时同时写入按 session 区分的 handoff 文件，Provider 在 `SetSerialization` 阶段跨进程恢复原始 Provider CLSID 后再放行。
 - [x] 点击取消按钮时，调用 Remote Desktop Services API 断开当前 RDP 会话。
 - [ ] 增加 RDP 注销/返回登录界面保护：如果 RDP 场景下没有收到 inbound credential serialization，不允许只显示 MFA 入口，默认断开当前 RDP 连接，迫使用户重新发起 RDP/NLA 并重新提供原始凭证。
 - [x] 中文注释解释 LogonUI UI 更新机制和状态切换原因。
@@ -187,6 +188,7 @@
 - [ ] 单元测试：所有认证方式关闭时恢复默认认证方式集合。
 - [ ] 单元测试：认证超时配置解析与默认值。
 - [ ] 集成测试：认证超时后自动断开当前 RDP 会话。
+- [x] 单元测试：RDP 原始 Provider CLSID 可通过跨进程 handoff 文件恢复。
 - [ ] 单元测试：IPC 请求响应序列化。
 - [ ] 单元测试：注册表配置解析。
 - [ ] 单元测试：API 错误映射。
