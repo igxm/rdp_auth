@@ -10,6 +10,17 @@
 - 网络请求、注册表读取、业务审计日志、策略判断都放到本地 helper，避免 LogonUI 进程被阻塞或拖垮；Credential Provider DLL 只允许写入轻量脱敏诊断日志，且日志失败不能影响登录流程。
 - 第一阶段不隐藏系统默认 Credential Provider，确认 RDP pass-through 链路稳定后再实现过滤器，降低锁死测试机风险。
 
+## 日志与错误处理技术选型
+
+- [x] 调研 Rust 日志库：`tracing` 是结构化、事件驱动诊断框架，`tracing-appender` 支持滚动文件和非阻塞写入；`tklog` 提供轻量同步/异步文件日志和切割能力，但生态集成、span 上下文和 crate 互操作性弱于 `tracing`。
+- [x] 确定日志主方案：后续统一采用 `tracing` + `tracing-subscriber` + `tracing-appender`，用于 helper、register_tool、auth_api 等普通进程；如需兼容第三方 `log` 生态，再接入 `tracing-log` 或 `tracing-subscriber` 的 log 兼容层。
+- [x] 确定 Credential Provider DLL 日志边界：LogonUI 进程内仍保持当前轻量诊断写入策略，后续如接入 `tracing`，必须保证初始化幂等、写入失败被吞掉、不能启动不可控后台线程阻塞登录，且不得记录用户名、密码、验证码、token 或原始 serialization 字节。
+- [x] 调研 Rust 错误处理库：`thiserror` 适合为库 crate 定义可匹配、可测试的结构化错误枚举；`anyhow` 适合二进制入口和任务编排层快速附加上下文并向上返回。
+- [x] 确定错误处理主方案：`auth_config`、`auth_ipc`、`auth_api`、`credential_provider` 等库 crate 使用 `thiserror` 定义领域错误；`remote_auth`、`register_tool` 等 bin crate 使用 `anyhow::Result` 汇总错误并补充人类可读上下文。
+- [ ] 在 workspace 统一增加日志与错误处理依赖：`tracing`、`tracing-subscriber`、`tracing-appender`、`thiserror`、`anyhow`；按 crate 职责选择性引用，避免 Credential Provider DLL 引入不必要运行时负担。
+- [ ] 新增统一日志模块：定义日志目录、文件名、轮转策略、非阻塞 guard 生命周期、脱敏字段约定、初始化幂等策略，并区分诊断日志与业务审计日志。
+- [ ] 新增统一错误模块：各库 crate 定义 `Error` / `Result<T>` 类型别名，错误枚举必须包含安全的 Display 文案和可记录的诊断上下文，禁止把敏感输入直接放入错误消息。
+
 ## 总体目标
 
 实现一个全 Rust 维护的 RDP 登录后二次认证方案：
@@ -107,6 +118,8 @@
 - [ ] 第一版 helper 先返回 mock 结果，用固定验证码验证主链路。
 - [ ] Credential Provider 通过命名管道调用 helper。
 - [ ] 增加超时处理，避免 LogonUI 长时间无响应。
+- [ ] helper 使用 `tracing` 输出结构化诊断日志，记录 request_id、认证方式、耗时、结果码和脱敏错误原因。
+- [ ] helper 使用 `anyhow` 作为入口层错误返回，IPC 协议错误和业务错误使用 `thiserror` 定义可匹配类型。
 - [ ] 中文注释解释为何 CP DLL 不直接发网络请求。
 
 ## 阶段 6：配置读取
@@ -140,6 +153,8 @@
 - [ ] 定义统一 API 错误码和用户提示文案。
 - [ ] 所有请求设置连接超时和总超时。
 - [ ] 所有日志脱敏手机号、验证码、密码、token。
+- [ ] `auth_api` 使用 `thiserror` 定义 API 错误类型，区分网络错误、HTTP 状态错误、服务端业务错误、响应解析错误和超时错误。
+- [ ] API 调用使用 `tracing` 记录脱敏请求上下文、耗时、HTTP 状态码和服务端错误码，禁止记录 token、验证码、密码和原始响应中的敏感字段。
 - [ ] 中文注释说明每个 API 的用途、入参来源和失败策略。
 
 ## 阶段 8：微信扫码认证
@@ -181,6 +196,8 @@
 - [x] 提供健康检查命令。
 - [x] 提供应急禁用命令。
 - [x] 编写 VM 测试和恢复文档。
+- [ ] `register_tool` 使用 `anyhow` 为安装、卸载、注册表读写和路径校验错误补充上下文，命令行输出保持中文可读。
+- [ ] `register_tool health` 增加日志配置检查：显示日志目录是否存在、最近诊断日志路径、日志文件大小和最近修改时间。
 - [ ] 中文注释解释每个注册表项的作用和删除风险。
 
 ## 阶段 11：测试计划
@@ -197,6 +214,9 @@
 - [ ] 单元测试：IPC 请求响应序列化。
 - [ ] 单元测试：注册表配置解析。
 - [ ] 单元测试：API 错误映射。
+- [ ] 单元测试：`thiserror` 领域错误能稳定映射到用户可见文案、诊断码和 IPC 响应错误码。
+- [ ] 单元测试：日志脱敏函数会过滤手机号、验证码、密码、token、serialization 字节和换行符。
+- [ ] 集成测试：`tracing-appender` 日志能写入 `C:\ProgramData\rdp_auth\logs` 并按配置轮转。
 - [ ] 集成测试：helper mock 服务。
 - [ ] 集成测试：CP 调 helper 超时。
 - [x] VM 测试：RDP + NLA + 正确凭证 + MFA 成功。（当前为 pass-through 验证，真实 MFA 接入后需复测）
@@ -212,6 +232,8 @@
 - [ ] Windows 密码和 RDP 原始凭证 serialization 不写日志。
 - [ ] 验证码、二次密码、token 不写日志。
 - [x] Credential Provider 诊断日志只记录阶段、PID、session、Provider GUID、serialization 长度和错误码，写入失败不影响 LogonUI。
+- [ ] 所有 `tracing` 字段必须先经过脱敏策略评审，禁止直接使用 `?struct` 或 `%struct` 记录包含敏感字段的结构体。
+- [ ] 所有 `anyhow::Context` 文案不得拼接敏感值；需要排查时使用脱敏 ID、长度、哈希前缀或内部错误码。
 - [ ] 使用后清理敏感内存，必要处调用 Windows 安全清零 API。
 - [ ] helper 路径固定，并校验文件存在性。
 - [ ] CP 与 helper IPC 增加调用方校验或权限控制。
