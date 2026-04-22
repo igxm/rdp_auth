@@ -12,10 +12,19 @@
 
 ## 当前优先级
 
-1. 先用 VM 验证现有 RDP pass-through 主链路、缺失 serialization 断开保护、MFA 超时断开和短信倒计时 UI 刷新，确认不会误断首次登录。
-2. 再把超时、缺失 serialization 等待窗口、短信重新发送时间迁移到统一 TOML 配置，并让 `register_tool health` 能显示当前生效值。
+1. 先用 VM 验证现有 RDP pass-through 主链路、缺失 serialization 断开保护、MFA 超时断开和短信倒计时 UI 刷新，确认不会误断首次登录；如果要兼容 Windows Server 2008 R2，先做专门兼容性冒烟验证，不要等真实 API 接入后再回头排查系统差异。
+2. 再把超时、缺失 serialization 等待窗口、短信重新发送时间、helper IPC 超时、session 状态 TTL 等迁移到统一 TOML 配置，并让 `register_tool health` 能显示当前生效值。
 3. 然后实现 helper / IPC 的 mock 服务和 helper 内存态 session 跟踪，把 CP 内的 mock 逻辑逐步迁移到 helper，保持 Credential Provider DLL 轻量。
-4. 最后接入真实 API、远程配置、审计日志和微信扫码。
+4. 在 helper/IPC 稳定之后接入真实 API、远程配置、手机号文件、审计日志和公网/内网 IP 采集。
+5. 最后接入微信扫码等扩展认证方式；该阶段不应阻塞 RDP 主链路和锁屏断开问题的收敛。
+
+## 任务可行性分级
+
+- **A级：已完成或只需复测确认。** Workspace 骨架、Credential Provider 加载、RDP inbound serialization 接收、Kerberos interactive/unlock 重新打包、mock MFA、MFA 超时断开、缺失 serialization 快速断开、短信按钮倒计时刷新等已经有实现记录，后续重点是 VM 回归和日志补齐。
+- **B级：可直接开发，风险较低。** 统一 TOML 配置、配置默认值、`register_tool health` 展示、`auth_core` 手机号校验、日志/错误处理依赖、配置解析单元测试、文档更新等不依赖 Windows 登录链路，可先在普通进程和单元测试里稳定。
+- **C级：依赖 helper/IPC 前置。** Windows session notification、helper 内存态 `SessionAuthState`、锁屏后立即断开策略、真实短信/二次密码 API、手机号文件读取、远程配置、审计上下文、公网/内网 IP 采集都应放在 helper 内完成；在 helper mock 服务可用前，Credential Provider 不应直接承接这些复杂逻辑。
+- **D级：高风险，必须 VM 验证后定版。** Credential Provider Filter 隐藏默认 Provider、`CPUS_LOGON` 与 `CPUS_UNLOCK_WORKSTATION` 差异、RDP/NLA serialization 慢到窗口、跨进程 session 状态判断、Windows Server 2008 R2 兼容、LogonUI 字段刷新线程模型等都属于系统行为相关任务，不能只靠代码审查判断可行。
+- **暂缓项。** 真实 API、微信扫码、远程配置自动更新、复杂审计上报在 RDP 主链路、helper/IPC 和 VM 兼容矩阵稳定前不作为当前收敛目标，避免把问题定位范围扩大。
 
 ## 配置与文件读取边界
 
@@ -63,6 +72,23 @@
 - [ ] 将缺失 serialization 等待窗口改为统一配置项，例如 `mfa.missing_serialization_grace_seconds`，缺失或非法时使用安全默认值。
 - [ ] 日志补齐场景链路：记录 `SetUsageScenario`、`Filter`、`UpdateRemoteCredential`、`GetCredentialCount`、`GetCredentialAt`、`SetSerialization`、`MissingSerialization`、`MfaTimeout`、`GetSerialization`、`ReportResult` 的关键脱敏字段。
 - [ ] VM 验证 Windows 10/Server 版本上 `CPUS_LOGON` 与 `CPUS_UNLOCK_WORKSTATION` 的实际调用差异，避免把锁屏逻辑写死到单一 usage scenario。
+
+## Windows Server 2008 R2 兼容方案
+
+结论：Windows Server 2008 R2 可以作为兼容目标分析和验证，但不能在未跑通专门 VM 矩阵前声明支持。该系统属于 NT 6.1 时代，Credential Provider、RDP/NLA、RDS 会话 API 基础能力存在，但现代 Rust/MSVC 运行时、Windows API set、TLS/Schannel、依赖 crate 的最低系统版本都可能成为真实阻断点。兼容工作必须拆成独立轨道，避免影响主线系统上的稳定实现。
+
+- [ ] 定义支持级别：主线优先支持当前开发 VM 和较新的 Windows Server；Windows Server 2008 R2 初始标记为“待验证/实验性兼容”，只有专门 VM 测试全部通过后才能写入安装文档的支持矩阵。
+- [ ] 准备 Windows Server 2008 R2 SP1 64 位 VM，记录系统版本、补丁状态、是否启用 RDP/NLA、是否启用 TLS 1.2、是否安装 VC++ 运行时，并建立可回滚快照。
+- [ ] 固定兼容构建环境：确认 Rust toolchain、`windows` crate、MSVC/Windows SDK、链接选项和目标三元组对 Windows 7/Server 2008 R2 仍可运行；必要时增加 `legacy_2008r2` feature 或单独构建配置。
+- [ ] 检查 DLL/EXE 导入表：使用 `dumpbin /imports`、Dependencies 或同类工具确认 `credential_provider.dll`、`remote_auth.exe`、`register_tool.exe` 没有静态导入 Server 2008 R2 不存在的 API set 或新系统 DLL；发现问题时改为动态加载、降级实现或禁用对应功能。
+- [ ] 审计 Credential Provider 相关 API 最低系统要求：`ICredentialProvider`、`ICredentialProviderCredential`、`ICredentialProviderFilter`、`UpdateRemoteCredential`、`CredUnPackAuthenticationBufferW`、`CredPackAuthenticationBufferW`、`LsaLookupAuthenticationPackage`、COM 注册表项和 LogonUI 调用顺序都必须在 2008 R2 VM 中实测。
+- [ ] 审计 RDS/session API 最低系统要求：`WTSGetActiveConsoleSessionId`、`WTSQuerySessionInformationW`、`WTSDisconnectSession`、session lock/unlock/logoff/disconnect notification 在 2008 R2 上的可用性和事件时序必须实测；如果 helper 无法稳定收到锁屏事件，则 2008 R2 只能使用缺失 serialization fail closed 兜底策略。
+- [ ] 审计网络与 TLS 能力：真实短信、远程配置、公网 IP 查询如果依赖 HTTPS，必须确认 2008 R2 的 Schannel/TLS 1.2 补丁和系统策略；如果不可控，应在 helper 层提供明确错误和安装检查，不让 Credential Provider 直接承担网络失败。
+- [ ] 审计运行时部署：优先评估静态链接 CRT 或随安装包部署匹配 VC++ 运行时；安装工具应在 `health` 中显示运行时、配置文件、helper 路径、服务状态和关键 DLL 导入检查结果。
+- [ ] 增加兼容降级开关：如 2008 R2 上 `ICredentialProviderFilter` 或 UI 刷新不稳定，允许关闭隐藏默认 Provider、使用更保守的字段刷新、禁用非必要动态 UI；这些开关统一进入 TOML 配置，注册表只保存必要引导信息。
+- [ ] 增加 2008 R2 VM 冒烟用例：注册/卸载、LogonUI 正常加载、控制台登录不被锁死、RDP/NLA 首次登录收到 `SetSerialization`、mock MFA 成功进入桌面、验证码错误不会放行、取消/MFA 超时会断开 RDP、锁屏/注销返回 LogonUI 时无 serialization 会快速断开、短信按钮倒计时会刷新。
+- [ ] 增加 2008 R2 helper 用例：helper 服务启动、命名管道 IPC、`mark_session_authenticated`、`has_authenticated_session`、`clear_session_state`、session notification、TTL 清理、helper 不可用时 CP fail closed。
+- [ ] 明确不支持判定：如果 2008 R2 上无法可靠收到 RDP inbound serialization、`UpdateRemoteCredential`/Filter 链路不稳定且无法降级，或 Kerberos interactive/unlock serialization 无法被 LSA 接受，则该版本不支持当前 RDP pass-through MFA 架构，只保留文档说明，不继续投入真实 API 和微信扫码兼容。
 
 ## 阶段 0：仓库基线与工程规范
 
