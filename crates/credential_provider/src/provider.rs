@@ -18,8 +18,9 @@ use crate::credential::RdpMfaCredential;
 use crate::diagnostics::log_event;
 use crate::fields::{FIELD_COUNT, field_descriptor};
 use crate::serialization::InboundSerialization;
+use crate::session::is_current_rdp_session;
 use crate::state::{CredentialProviderState, RDP_MFA_PROVIDER_CLSID, take_remote_source_provider};
-use crate::timeout::start_mfa_timeout_timer;
+use crate::timeout::{start_mfa_timeout_timer, start_missing_serialization_disconnect_timer};
 
 /// 最小 Credential Provider。
 ///
@@ -202,6 +203,17 @@ impl ICredentialProvider_Impl for RdpMfaProvider_Impl {
         if index != 0 {
             log_event("GetCredentialAt", format!("invalid index={index}"));
             return Err(Error::from_hresult(E_INVALIDARG));
+        }
+        let should_guard_missing_inbound = {
+            let state = self.state.lock().expect("provider state poisoned");
+            !state.has_inbound_serialization && is_current_rdp_session()
+        };
+        if should_guard_missing_inbound {
+            // RDP 锁屏/注销后返回登录界面时，LogonUI 可能只枚举我们的 Tile，
+            // 但不再提供新的 NLA 原始凭证。当前架构不保存首次登录密码，因此不能
+            // 让用户停留在孤立 MFA 入口；给 SetSerialization 一个短暂机会后断开，
+            // 迫使客户端重新发起 RDP/NLA 并重新提供一次凭证。
+            start_missing_serialization_disconnect_timer(Arc::clone(&self.state));
         }
         log_event("GetCredentialAt", "returning credential index=0");
         Ok(RdpMfaCredential::new(Arc::clone(&self.state)).into())

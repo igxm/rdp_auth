@@ -15,6 +15,7 @@ use crate::session::disconnect_current_session;
 use crate::state::CredentialProviderState;
 
 pub const DEFAULT_MFA_TIMEOUT_SECONDS: u64 = 120;
+pub const MISSING_SERIALIZATION_GRACE_SECONDS: u64 = 5;
 
 pub fn start_mfa_timeout_timer(state: Arc<Mutex<CredentialProviderState>>) {
     let (generation, timeout_seconds) = {
@@ -80,6 +81,78 @@ pub fn start_mfa_timeout_timer(state: Arc<Mutex<CredentialProviderState>>) {
     if let Err(error) = spawn_result {
         log_event(
             "MfaTimeout",
+            format!("timer_spawn_failed generation={generation} error={error}"),
+        );
+    }
+}
+
+pub fn start_missing_serialization_disconnect_timer(state: Arc<Mutex<CredentialProviderState>>) {
+    let generation = {
+        let mut state = state.lock().expect("provider state poisoned");
+        state.timeout_generation = state.timeout_generation.wrapping_add(1);
+        if state.timeout_generation == 0 {
+            state.timeout_generation = 1;
+        }
+        state.timeout_generation
+    };
+
+    log_event(
+        "MissingSerialization",
+        format!(
+            "timer_started generation={generation} grace_seconds={MISSING_SERIALIZATION_GRACE_SECONDS}"
+        ),
+    );
+
+    let spawn_result = thread::Builder::new()
+        .name("rdp_auth_missing_serialization".to_owned())
+        .spawn(move || {
+            thread::sleep(Duration::from_secs(MISSING_SERIALIZATION_GRACE_SECONDS));
+            let should_disconnect = {
+                let mut state = state.lock().expect("provider state poisoned");
+                if state.timeout_generation != generation {
+                    log_event(
+                        "MissingSerialization",
+                        format!(
+                            "timer_stale generation={} current_generation={}",
+                            generation, state.timeout_generation
+                        ),
+                    );
+                    false
+                } else if state.has_inbound_serialization {
+                    log_event(
+                        "MissingSerialization",
+                        format!("inbound_arrived generation={generation}"),
+                    );
+                    false
+                } else {
+                    state.mfa_state =
+                        MfaState::Failed("未收到 RDP 原始凭证，已断开连接".to_owned());
+                    state.status_message = "未收到 RDP 原始凭证，已断开连接".to_owned();
+                    log_event(
+                        "MissingSerialization",
+                        format!("disconnect_missing_inbound generation={generation}"),
+                    );
+                    true
+                }
+            };
+
+            if should_disconnect {
+                match disconnect_current_session() {
+                    Ok(()) => log_event(
+                        "MissingSerialization",
+                        format!("disconnect_ok generation={generation}"),
+                    ),
+                    Err(error) => log_event(
+                        "MissingSerialization",
+                        format!("disconnect_failed generation={generation} error={error}"),
+                    ),
+                }
+            }
+        });
+
+    if let Err(error) = spawn_result {
+        log_event(
+            "MissingSerialization",
             format!("timer_spawn_failed generation={generation} error={error}"),
         );
     }

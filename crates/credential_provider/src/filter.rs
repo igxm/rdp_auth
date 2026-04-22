@@ -8,19 +8,15 @@
 use auth_config::LoginPolicy;
 use auth_config::load_login_policy;
 use windows::Win32::Foundation::E_POINTER;
-use windows::Win32::System::RemoteDesktop::{
-    ProcessIdToSessionId, WTSClientProtocolType, WTSFreeMemory, WTSQuerySessionInformationW,
-};
-use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Shell::{
     CPUS_LOGON, CPUS_UNLOCK_WORKSTATION, CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION,
     CREDENTIAL_PROVIDER_USAGE_SCENARIO, ICredentialProviderFilter, ICredentialProviderFilter_Impl,
 };
-use windows::core::PWSTR;
 use windows::core::{BOOL, Error, GUID, Result, implement};
 
 use crate::diagnostics::log_event;
 use crate::serialization::InboundSerialization;
+use crate::session::is_current_rdp_session;
 use crate::state::{RDP_MFA_PROVIDER_CLSID, remember_remote_source_provider};
 
 /// RDP 二次认证 Filter。
@@ -179,39 +175,6 @@ fn filter_action_for_scenario(
     } else {
         ProviderFilterAction::HideOurProvider
     }
-}
-
-fn is_current_rdp_session() -> bool {
-    let mut session_id = 0_u32;
-    if unsafe { ProcessIdToSessionId(GetCurrentProcessId(), &mut session_id) }.is_err() {
-        return false;
-    }
-
-    let mut buffer = PWSTR::null();
-    let mut bytes_returned = 0_u32;
-    if unsafe {
-        WTSQuerySessionInformationW(
-            None,
-            session_id,
-            WTSClientProtocolType,
-            &mut buffer,
-            &mut bytes_returned,
-        )
-    }
-    .is_err()
-    {
-        return false;
-    }
-
-    let protocol_type = if bytes_returned >= std::mem::size_of::<u16>() as u32 && !buffer.is_null()
-    {
-        unsafe { *(buffer.0 as *const u16) }
-    } else {
-        0
-    };
-
-    unsafe { WTSFreeMemory(buffer.0 as _) };
-    protocol_type == 2
 }
 
 #[cfg(test)]
