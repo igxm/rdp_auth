@@ -78,6 +78,10 @@
 - [x] 用中文注释说明为什么不能自己调用 `LsaLogonUser`，以及为什么交给 Winlogon 处理。
 - [x] 使用 `CredUnPackAuthenticationBufferW` 从 RDP/NLA inbound authentication buffer 中解出 Windows 一次凭证，只在内存中短暂保存，不写日志。
 - [x] MFA 通过后使用 `CredPackAuthenticationBufferW` 重新打包凭证，并通过 `LsaLookupAuthenticationPackage("Negotiate")` 填入正确 authentication package，避免继续返回 `auth_package=0` 的 inbound buffer。
+- [x] 对照 `FaceWinUnlock-Tauri/Server` 的 Credential Provider 实现，确认 `CredPackAuthenticationBufferW` + `LsaLookupAuthenticationPackage("Negotiate")` 路线可作为优先验证方案。
+- [x] 修正 `Negotiate` authentication package 查询的 `LSA_STRING` 构造，按 Windows API 习惯保留 NUL 结尾容量，并补充查询结果诊断日志。
+- [x] 增强 RDP 凭证解包/重打包脱敏日志：记录 LSA 查询状态、CredUnPack/CredPack 返回结果、长度、package id 和用户名形态标记，不记录用户名、密码或 serialization 字节。
+- [ ] 如果增强诊断后仍返回 `STATUS_LOGON_FAILURE / STATUS_INTERNAL_ERROR`，再实现 `KERB_INTERACTIVE_LOGON` 或 `KERB_INTERACTIVE_UNLOCK_LOGON` 手工序列化方案，并与 `CredPackAuthenticationBufferW` 路线做 VM 对比。
 
 ## 阶段 4：二次认证 UI 状态机
 
@@ -211,6 +215,7 @@
 - [x] 单元测试：RDP 原始 Provider CLSID 可通过跨进程 handoff 文件恢复。
 - [x] 单元测试：Credential Provider 诊断日志会清理换行符，避免单条日志被拆行。
 - [x] 单元测试：RDP 凭证重新打包时正确拼接域用户、保留 UPN 用户名。
+- [x] 单元测试：`Negotiate` authentication package 名称按 LSA 调用要求保留 NUL 结尾容量。
 - [ ] 单元测试：IPC 请求响应序列化。
 - [ ] 单元测试：注册表配置解析。
 - [ ] 单元测试：API 错误映射。
