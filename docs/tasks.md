@@ -111,8 +111,8 @@
 - [x] 删除底部重复状态区域，避免登录按钮下方再出现一块“第二部分”内容。
 - [x] 发送验证码后立即把按钮切换为禁用态，并显示 `重新发送(60)`。
 - [ ] 实现短信验证码重新发送倒计时递减，并在 60 秒后恢复为可点击 `发送验证码`。（需结合 LogonUI events 的受控刷新或 helper 心跳，避免在 CP DLL 中用不受控后台线程刷 UI）
-- [ ] 增加认证超时断开机制：用户进入二次认证界面后，如果 2 分钟内未完成认证，自动断开当前 RDP 会话。
-- [ ] 认证超时断开时间后续改为从配置文件读取，缺失时默认 120 秒。
+- [x] 增加认证超时断开机制：收到 RDP inbound serialization 后启动默认 2 分钟的一次性定时器，超时仍未完成二次认证时自动断开当前 RDP 会话。
+- [ ] 认证超时断开时间后续改为从统一配置文件读取，缺失时默认 120 秒。
 - [x] 设计 `MfaState` 状态机：空闲、发送短信中、等待输入、认证中、成功、失败。
 - [x] 使用 mock 数据模拟认证通过情况：手机验证码 `123456`、二次密码 `mock-password`。
 - [x] 二次认证未通过时，`GetSerialization` 不返回原始凭证。
@@ -149,19 +149,24 @@
 
 ## 阶段 6：配置读取
 
-- [ ] `auth_config` 读取注册表 `SOFTWARE\rdp_auth\config`。
-- [ ] 定义认证方式开关配置，例如 `EnablePhoneCodeMfa`、`EnableSecondPasswordMfa`、`EnableWechatMfa`，默认启用手机验证码和二次密码，微信在真实接入前默认关闭。
-- [ ] 定义认证超时配置，例如 `MfaTimeoutSeconds`，默认 120 秒，设置过小/非法时恢复默认值。
-- [ ] 定义手机号来源配置，例如 `PhoneSource=file|input`；默认建议为 `input`，避免文件缺失导致测试环境无法收验证码。
-- [ ] 定义手机号文件路径配置，例如 `PhoneFilePath=C:\ProgramData\rdp_auth\phone.txt`，仅在 `PhoneSource=file` 时由 helper 读取，Credential Provider 不直接打开该文件。
+- [x] 确定配置集中化方案，详见 `docs/configuration.md`：本地人工维护配置使用 TOML，远程配置缓存可使用 JSON，注册表只保留最小引导项和应急开关。
+- [ ] 配置采用单一文件为主，推荐路径为 `C:\ProgramData\rdp_auth\config\rdp_auth.toml`，格式优先选择 TOML；如服务端下发天然是 JSON，可在远程缓存层保留 JSON，但本地人工维护配置仍以 TOML 为主。
+- [ ] 注册表只保留 Windows 集成所必需的机器级信息：Provider/Filter COM 注册、LogonUI 枚举入口、DLL 路径、helper 路径、配置文件路径、`DisableMfa` 应急开关和必要的 `EnableRdpMfa` / `EnableConsoleMfa` 登录入口策略；认证方式、API、手机号、超时、审计、远程配置等业务配置不得散落写入注册表。
+- [ ] `auth_config` 读取注册表 `SOFTWARE\rdp_auth\config` 中的最小引导项，例如 `ConfigPath`、`HelperPath`、`DisableMfa`、`EnableRdpMfa`、`EnableConsoleMfa`，再读取统一配置文件。
+- [ ] `register_tool install` 初始化统一配置文件，若文件已存在则不覆盖人工修改；注册表只写最小引导项和 Windows 必需注册项。
+- [ ] 定义统一配置 schema，至少包含 `[auth_methods]`、`[mfa]`、`[phone]`、`[api]`、`[audit]`、`[remote_config]`、`[logging]` 七组配置，并提供版本字段 `schema_version`。
+- [ ] 定义认证方式开关配置，例如 `auth_methods.phone_code`、`auth_methods.second_password`、`auth_methods.wechat`，默认启用手机验证码和二次密码，微信在真实接入前默认关闭。
+- [ ] 定义认证超时配置，例如 `mfa.timeout_seconds`，默认 120 秒，设置过小/非法时恢复默认值。
+- [ ] 定义手机号来源配置，例如 `phone.source = "file" | "input"`；默认建议为 `input`，避免文件缺失导致测试环境无法收验证码。
+- [ ] 定义手机号文件路径配置，例如 `phone.file_path = "C:\\ProgramData\\rdp_auth\\phone.txt"`，仅在 `phone.source = "file"` 时由 helper 读取，Credential Provider 不直接打开该文件。
 - [ ] `auth_core` 提供手机号校验和脱敏函数：合法手机号按 `138****8888` 格式展示，非法手机号不暴露前后缀。
 - [ ] `auth_config` 只定义手机号来源、路径、优先级和错误类型；真实手机号文件读取、校验和 fail closed 决策由 helper 执行。
-- [ ] 定义公网 IP 查询配置，例如 `PublicIpEndpoint`、`PublicIpTimeoutSeconds`、`RequirePublicIpForSms`，默认公网 IP 获取失败不阻断短信。
-- [ ] 定义 IP 审计日志策略，例如 `AuditIpLogging=full|masked|off`，区分诊断日志和审计日志对 IP 字段的记录方式。
-- [ ] 定义远程配置缓存路径，例如 `C:\ProgramData\rdp_auth\config\remote_policy.json`，并定义版本号、更新时间、TTL 和完整性校验字段。
-- [ ] 支持远程配置下发：helper 启动时拉取配置，按 `ConfigRefreshSeconds` 周期刷新；拉取失败时使用最后一次有效配置，从未成功拉取时使用本地安全默认值。
+- [ ] 定义公网 IP 查询配置，例如 `api.public_ip_endpoint`、`api.public_ip_timeout_seconds`、`api.require_public_ip_for_sms`，默认公网 IP 获取失败不阻断短信。
+- [ ] 定义 IP 审计日志策略，例如 `audit.ip_logging = "full" | "masked" | "off"`，区分诊断日志和审计日志对 IP 字段的记录方式。
+- [ ] 定义远程配置缓存路径，例如 `remote_config.cache_path = "C:\\ProgramData\\rdp_auth\\config\\remote_policy.json"`，并定义版本号、更新时间、TTL 和完整性校验字段。
+- [ ] 支持远程配置下发：helper 启动时拉取配置，按 `remote_config.refresh_seconds` 周期刷新；拉取失败时使用最后一次有效配置，从未成功拉取时使用本地安全默认值。
 - [ ] 远程配置不得关闭所有认证方式或绕过 MFA；若下发非法策略，自动回退默认认证方式集合并记录审计告警。
-- [ ] 支持从配置文件读取认证方式开关，并明确与注册表策略的优先级。
+- [ ] 支持从统一配置文件读取认证方式开关，并明确优先级：应急注册表开关优先级最高，其次是经完整性校验的远程配置，最后是本地统一配置文件和内置安全默认值。
 - [ ] 新增 `AuthMethodPolicy` 或等效结构，统一表达哪些认证方式可展示、可提交。
 - [ ] 配置中关闭的认证方式必须同时影响 UI 展示和提交校验，避免通过手工构造字段值提交已禁用方式。
 - [ ] 当配置文件把所有认证方式都关闭时，自动回退到默认认证方式集合，并记录脱敏诊断信息。
@@ -169,11 +174,11 @@
 - [ ] helper 读取 `serveraddr` 并用于 API base URL 或远程配置拉取，Credential Provider 不直接读取。
 - [ ] `ClientIp` 不再作为静态配置优先来源；helper 应优先从当前 RDP session 动态采集，配置值仅作为采集失败时的显式 fallback。
 - [ ] helper 读取 `r_ip_range`、`r_time_range`、`r_region` 等策略配置并在本地或服务端策略判断中使用，CP 只接收最终允许/拒绝或可展示策略。
-- [ ] helper 支持读取 `reginfo.ini`，并明确其与注册表、本地配置文件、远程配置缓存的优先级；CP 不直接读取 `reginfo.ini`。
+- [ ] helper 支持兼容读取旧版 `reginfo.ini`，只作为迁移来源或显式 fallback；成功迁移后写入统一配置文件，CP 不直接读取 `reginfo.ini`。
 - [ ] 配置缺失时返回结构化错误。
 - [ ] 认证方式配置缺失或非法时使用安全默认值；全部关闭时恢复默认认证方式集合。
 - [ ] helper 启动时输出脱敏诊断日志。
-- [ ] 中文注释说明注册表路径、字段意义、缺失字段处理策略。
+- [ ] 中文注释说明最小注册表引导项、统一配置文件字段意义、缺失字段处理策略和向后兼容迁移规则。
 
 ## 阶段 7：真实服务端 API
 
@@ -243,7 +248,8 @@
 - [ ] 单元测试：认证方式开关配置解析与默认值。
 - [ ] 单元测试：禁用认证方式不会出现在 UI 方法列表中。
 - [ ] 单元测试：所有认证方式关闭时恢复默认认证方式集合。
-- [ ] 单元测试：认证超时配置解析与默认值。
+- [x] 单元测试：Credential Provider 内置认证超时默认值为 120 秒，初始 generation 为 0。
+- [ ] 单元测试：统一配置文件中的认证超时配置解析与默认值。
 - [ ] 单元测试：手机号校验规则，合法手机号满足 `^1[3-9]\d{9}$`，非法手机号被拒绝。
 - [ ] 单元测试：手机号脱敏规则，`13812348888` 显示为 `138****8888`，非法手机号显示为安全占位文案。
 - [ ] 单元测试：helper 文件读取手机号模式会让 CP 禁用手机号输入框，并且 UI 只显示脱敏手机号。
@@ -253,7 +259,7 @@
 - [ ] 单元测试：公网 IP 获取失败时按策略返回 `unknown` 或 fail closed。
 - [ ] 单元测试：审计日志字段序列化包含 client_ip、host_public_ip、host_private_ips、host_uuid、session_id，且不包含手机号、验证码、密码、token。
 - [ ] 单元测试：远程配置版本、TTL、签名/校验字段解析，非法配置不能覆盖本地有效配置。
-- [ ] 集成测试：认证超时后自动断开当前 RDP 会话。
+- [ ] 集成测试：认证超时后自动断开当前 RDP 会话。（代码路径已实现，仍需 VM 验证）
 - [x] 单元测试：RDP 原始 Provider CLSID 可通过跨进程 handoff 文件恢复。
 - [x] 单元测试：Credential Provider 诊断日志会清理换行符，避免单条日志被拆行。
 - [x] 单元测试：RDP 凭证重新打包时正确拼接域用户、保留 UPN 用户名。

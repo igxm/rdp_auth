@@ -15,6 +15,7 @@ use windows::core::GUID;
 
 use crate::diagnostics::log_event;
 use crate::serialization::{InboundSerialization, RemoteLogonCredential};
+use crate::timeout::DEFAULT_MFA_TIMEOUT_SECONDS;
 
 /// 当前 Credential Provider 的 CLSID。
 ///
@@ -163,6 +164,10 @@ pub struct CredentialProviderState {
     /// 短信验证码重新发送剩余秒数。倒计时后续需要由 LogonUI 事件或 helper 心跳推进；
     /// 当前先保存禁用态，避免用户连续点击发送验证码。
     pub sms_resend_remaining: u32,
+    /// 二次认证超时秒数。后续由 helper 策略快照下发，当前使用安全默认值 120 秒。
+    pub mfa_timeout_seconds: u64,
+    /// 超时定时器 generation。每次新的 RDP serialization 都递增，旧定时器醒来后据此自退。
+    pub timeout_generation: u64,
 }
 
 impl Default for CredentialProviderState {
@@ -180,6 +185,8 @@ impl Default for CredentialProviderState {
             second_password: String::new(),
             status_message: "请选择二次认证方式".to_owned(),
             sms_resend_remaining: 0,
+            mfa_timeout_seconds: DEFAULT_MFA_TIMEOUT_SECONDS,
+            timeout_generation: 0,
         }
     }
 }
@@ -210,6 +217,13 @@ mod tests {
     fn default_state_requires_mfa_before_serialization() {
         let state = CredentialProviderState::default();
         assert!(!state.allow_passthrough_without_mfa);
+    }
+
+    #[test]
+    fn default_state_uses_safe_mfa_timeout() {
+        let state = CredentialProviderState::default();
+        assert_eq!(state.mfa_timeout_seconds, 120);
+        assert_eq!(state.timeout_generation, 0);
     }
 
     #[test]

@@ -79,7 +79,7 @@ Filter 会临时把 Provider CLSID 改成本项目 CLSID，让 LogonUI 把远程
 
 ## 认证超时策略
 
-二次认证界面应有超时断开机制：用户进入 Tile 后，如果默认 2 分钟内没有完成认证，应自动断开当前 RDP 会话，避免远程登录界面长时间停留。后续超时时间通过配置文件读取，例如 `MfaTimeoutSeconds`，缺失或非法时恢复默认 120 秒。
+二次认证界面已经接入默认 2 分钟超时断开机制：Credential Provider 收到 RDP inbound serialization 后启动一次性受控定时器，如果到期时二次认证仍未通过，会调用 Remote Desktop Services API 断开当前 RDP 会话，避免远程登录界面长时间停留。每次新的 RDP serialization 都会递增 timeout generation，旧定时器醒来后会自动退出，避免误断开新的登录尝试。后续超时时间通过统一配置文件读取，例如 `mfa.timeout_seconds`，缺失或非法时恢复默认 120 秒。
 
 ## 认证方式配置策略
 

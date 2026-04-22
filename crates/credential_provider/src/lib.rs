@@ -13,7 +13,9 @@ mod filter;
 mod memory;
 mod provider;
 mod serialization;
+mod session;
 mod state;
+mod timeout;
 
 pub use dll::{DllCanUnloadNow, DllGetClassObject, DllMain};
 pub use state::{CredentialProviderState, RDP_MFA_FILTER_CLSID, RDP_MFA_PROVIDER_CLSID};

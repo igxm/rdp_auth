@@ -19,6 +19,7 @@ use crate::diagnostics::log_event;
 use crate::fields::{FIELD_COUNT, field_descriptor};
 use crate::serialization::InboundSerialization;
 use crate::state::{CredentialProviderState, RDP_MFA_PROVIDER_CLSID, take_remote_source_provider};
+use crate::timeout::start_mfa_timeout_timer;
 
 /// 最小 Credential Provider。
 ///
@@ -138,6 +139,7 @@ impl ICredentialProvider_Impl for RdpMfaProvider_Impl {
         state.has_inbound_serialization = copied.is_some();
         state.inbound_serialization = copied;
         state.remote_logon_credential = remote_logon_credential;
+        let should_start_timeout = state.has_inbound_serialization;
         log_event(
             "SetSerialization",
             format!(
@@ -146,6 +148,10 @@ impl ICredentialProvider_Impl for RdpMfaProvider_Impl {
                 state.remote_logon_credential.is_some()
             ),
         );
+        drop(state);
+        if should_start_timeout {
+            start_mfa_timeout_timer(Arc::clone(&self.state));
+        }
         Ok(())
     }
 

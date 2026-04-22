@@ -8,8 +8,6 @@ use std::sync::{Arc, Mutex};
 use auth_core::{AuthMethod, MfaState};
 use windows::Win32::Foundation::{E_INVALIDARG, E_NOTIMPL, E_POINTER, NTSTATUS};
 use windows::Win32::Graphics::Gdi::HBITMAP;
-use windows::Win32::System::RemoteDesktop::{ProcessIdToSessionId, WTSDisconnectSession};
-use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Shell::{
     CPFIS_DISABLED, CPFIS_FOCUSED, CPFIS_NONE, CPFS_DISPLAY_IN_BOTH, CPFS_DISPLAY_IN_SELECTED_TILE,
     CPFS_HIDDEN, CPGSR_NO_CREDENTIAL_NOT_FINISHED, CPGSR_RETURN_CREDENTIAL_FINISHED, CPSI_ERROR,
@@ -23,6 +21,7 @@ use windows::core::{BOOL, Error, IUnknownImpl, PCWSTR, PWSTR, Ref, Result, imple
 use crate::diagnostics::log_event;
 use crate::fields::MfaField;
 use crate::memory::alloc_wide_string;
+use crate::session::disconnect_current_session;
 use crate::state::{CredentialProviderState, RDP_MFA_PROVIDER_CLSID};
 
 const AUTH_METHOD_LABELS: [&str; 3] = ["手机验证码", "二次密码", "微信扫码（预留）"];
@@ -549,15 +548,6 @@ fn verify_mock_mfa(state: &mut CredentialProviderState) -> std::result::Result<(
             state.status_message = message.to_owned();
             Err(message)
         }
-    }
-}
-
-fn disconnect_current_session() -> Result<()> {
-    let mut session_id = 0_u32;
-    unsafe {
-        // SAFETY: 输出指针指向当前栈变量；失败时返回 HRESULT，不使用未初始化 session id。
-        ProcessIdToSessionId(GetCurrentProcessId(), &mut session_id)?;
-        WTSDisconnectSession(None, session_id, false)
     }
 }
 
