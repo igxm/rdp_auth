@@ -10,6 +10,13 @@
 - 网络请求、注册表读取、业务审计日志、策略判断都放到本地 helper，避免 LogonUI 进程被阻塞或拖垮；Credential Provider DLL 只允许写入轻量脱敏诊断日志，且日志失败不能影响登录流程。
 - 第一阶段不隐藏系统默认 Credential Provider，确认 RDP pass-through 链路稳定后再实现过滤器，降低锁死测试机风险。
 
+## 当前优先级
+
+1. 先用 VM 验证现有 RDP pass-through 主链路、缺失 serialization 断开保护、MFA 超时断开和短信倒计时 UI 刷新，确认不会误断首次登录。
+2. 再把超时、缺失 serialization 等待窗口、短信重新发送时间迁移到统一 TOML 配置，并让 `register_tool health` 能显示当前生效值。
+3. 然后实现 helper / IPC 的 mock 服务，把 CP 内的 mock 逻辑逐步迁移到 helper，保持 Credential Provider DLL 轻量。
+4. 最后接入真实 API、远程配置、审计日志和微信扫码。
+
 ## 配置与文件读取边界
 
 - [x] 明确边界：Credential Provider DLL 不直接读取手机号文件、远程配置缓存、`reginfo.ini` 或复杂策略文件，避免 LogonUI 进程被磁盘 IO、权限、杀毒软件或配置解析错误拖垮。
@@ -40,6 +47,19 @@
 5. 用户完成短信验证码、二次密码或后续微信扫码认证。
 6. 二次认证通过后，`GetSerialization` 将 RDP 凭证重新打包成 LogonUI/LSA 可消费的 Negotiate 凭证。
 7. Winlogon / LSA 继续完成真正的 Windows 登录。
+
+## RDP 场景判定与断开策略
+
+- [x] 确定判定原则：Credential Provider 不监听“用户按下 Win+L”这类瞬时事件，只处理 LogonUI 请求的认证场景。
+- [x] `SetUsageScenario` 只作为场景上下文：同时支持 `CPUS_LOGON` 和 `CPUS_UNLOCK_WORKSTATION`，不能假设锁屏解锁一定只收到 `CPUS_UNLOCK_WORKSTATION`。
+- [x] RDP 来源以当前会话协议判断为主：通过 Remote Desktop Services 查询当前 session 是否为 RDP，而不是单独依赖 usage scenario。
+- [x] 放行能力以 inbound serialization 为准：只有收到 `SetSerialization` 并解包出一次 Windows 凭证后，MFA 通过才允许重新打包并交给 LogonUI/LSA。
+- [x] 无 inbound serialization 的 RDP 孤立 MFA 入口必须断开：当前架构不保存首次登录密码，也不实现一次凭证采集，所以不能让用户停留在无法放行的 MFA Tile。
+- [ ] 增加按 session 区分的轻量历史状态标记：`ReportResult status=0` 后记录当前 session 曾成功完成 RDP MFA，用于区分“首次登录 serialization 慢到”和“已登录会话锁屏/注销后返回 LogonUI”。
+- [ ] 缺失 serialization 保护按上下文使用不同等待窗口：已有成功会话返回 LogonUI 时使用短窗口，疑似首次登录时使用较宽松窗口，避免误断正常 RDP 登录。
+- [ ] 将缺失 serialization 等待窗口改为统一配置项，例如 `mfa.missing_serialization_grace_seconds`，缺失或非法时使用安全默认值。
+- [ ] 日志补齐场景链路：记录 `SetUsageScenario`、`Filter`、`UpdateRemoteCredential`、`GetCredentialCount`、`GetCredentialAt`、`SetSerialization`、`MissingSerialization`、`MfaTimeout`、`GetSerialization`、`ReportResult` 的关键脱敏字段。
+- [ ] VM 验证 Windows 10/Server 版本上 `CPUS_LOGON` 与 `CPUS_UNLOCK_WORKSTATION` 的实际调用差异，避免把锁屏逻辑写死到单一 usage scenario。
 
 ## 阶段 0：仓库基线与工程规范
 
@@ -157,6 +177,9 @@
 - [ ] 定义统一配置 schema，至少包含 `[auth_methods]`、`[mfa]`、`[phone]`、`[api]`、`[audit]`、`[remote_config]`、`[logging]` 七组配置，并提供版本字段 `schema_version`。
 - [ ] 定义认证方式开关配置，例如 `auth_methods.phone_code`、`auth_methods.second_password`、`auth_methods.wechat`，默认启用手机验证码和二次密码，微信在真实接入前默认关闭。
 - [ ] 定义认证超时配置，例如 `mfa.timeout_seconds`，默认 120 秒，设置过小/非法时恢复默认值。
+- [ ] 定义缺失 RDP 原始凭证保护配置，例如 `mfa.missing_serialization_grace_seconds`，默认先按 VM 结果确定为 1 到 5 秒之间，设置过小/非法时恢复安全默认值。
+- [ ] 定义短信重新发送配置，例如 `mfa.sms_resend_seconds`，默认 60 秒；helper/API 接入后优先使用服务端返回的限流时间。
+- [ ] 定义 RDP 断开策略配置，例如 `mfa.disconnect_when_missing_serialization = true`，应急关闭时必须记录脱敏诊断日志并保持 fail closed，不得绕过 MFA。
 - [ ] 定义手机号来源配置，例如 `phone.source = "file" | "input"`；默认建议为 `input`，避免文件缺失导致测试环境无法收验证码。
 - [ ] 定义手机号文件路径配置，例如 `phone.file_path = "C:\\ProgramData\\rdp_auth\\phone.txt"`，仅在 `phone.source = "file"` 时由 helper 读取，Credential Provider 不直接打开该文件。
 - [ ] `auth_core` 提供手机号校验和脱敏函数：合法手机号按 `138****8888` 格式展示，非法手机号不暴露前后缀。
@@ -231,6 +254,7 @@
 - [x] `register_tool uninstall` 删除注册表项。
 - [ ] 注册 helper 路径。
 - [ ] `register_tool status` / `health` 显示当前启用的认证方式，便于排查配置文件是否生效。
+- [ ] `register_tool status` / `health` 显示当前 MFA 超时、缺失 serialization 等待窗口、短信重新发送时间和配置来源，便于排查 VM 行为。
 - [x] 初始化 `C:\ProgramData\rdp_auth` 目录。
 - [x] 初始化日志目录。
 - [ ] 初始化远程配置缓存目录，例如 `C:\ProgramData\rdp_auth\config`。
@@ -250,6 +274,9 @@
 - [ ] 单元测试：所有认证方式关闭时恢复默认认证方式集合。
 - [x] 单元测试：Credential Provider 内置认证超时默认值为 120 秒，初始 generation 为 0。
 - [ ] 单元测试：统一配置文件中的认证超时配置解析与默认值。
+- [ ] 单元测试：统一配置文件中的缺失 serialization 等待窗口和短信重新发送时间解析与默认值。
+- [ ] 单元测试：缺失 serialization 保护 generation 变化后旧定时器不会断开新登录尝试。
+- [ ] 单元测试：短信倒计时 generation 变化后旧刷新线程不会覆盖新倒计时。
 - [ ] 单元测试：手机号校验规则，合法手机号满足 `^1[3-9]\d{9}$`，非法手机号被拒绝。
 - [ ] 单元测试：手机号脱敏规则，`13812348888` 显示为 `138****8888`，非法手机号显示为安全占位文案。
 - [ ] 单元测试：helper 文件读取手机号模式会让 CP 禁用手机号输入框，并且 UI 只显示脱敏手机号。
@@ -277,8 +304,11 @@
 - [ ] 集成测试：CP 调 helper 超时。
 - [x] VM 测试：RDP + NLA + 正确凭证 + mock MFA 成功，Kerberos interactive packed serialization 已验证进入桌面；真实 MFA 接入后需复测。
 - [ ] VM 测试：RDP + NLA + 正确凭证 + MFA 失败。
+- [ ] VM 测试：首次 RDP 登录时，即使 `GetCredentialCount` / `GetCredentialAt` 早于 `SetSerialization`，也不应被缺失 serialization 保护误断。
 - [ ] VM 测试：RDP 未传入 serialization 的降级提示。
 - [ ] VM 测试：RDP 用户注销后返回登录界面时，若没有新的 inbound serialization，应断开 RDP 连接而不是停留在孤立 MFA 入口。（代码路径已实现，仍需 VM 验证）
+- [ ] VM 测试：RDP 用户锁屏后返回登录界面时，记录实际 usage scenario，并验证无新 inbound serialization 时按策略断开。
+- [ ] VM 测试：短信按钮点击后逐秒更新 `重新发送(n)`，归零后恢复 `发送验证码` 并可再次点击。
 - [ ] VM 测试：服务端不可达时默认拒绝登录。
 - [x] VM 测试：系统默认 Provider 未隐藏时可恢复登录。
 - [x] VM 测试：Filter 启用后无法绕过 MFA。（当前验证为无法绕过 Provider，真实 MFA 接入后需复测）
