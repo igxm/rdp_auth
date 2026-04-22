@@ -122,6 +122,10 @@
 - [ ] 支持 `send_sms` 请求。
 - [ ] `send_sms` 请求携带手机号来源标记和真实手机号；IPC 日志只能记录来源、手机号是否有效、脱敏手机号，不记录完整手机号。
 - [ ] helper 对手机号再次执行格式校验，禁止只依赖 Credential Provider UI 校验；手机号非法时返回可展示错误且不调用真实短信 API。
+- [ ] helper 为每次 MFA 请求生成审计上下文 `AuditContext`：包含 request_id、session_id、client_ip、host_public_ip、host_private_ips、host_uuid 和认证方式。
+- [ ] helper 采集 RDP 连接用户 IP：优先按当前 Windows session 查询客户端地址；采集失败时填充 `unknown`，并记录脱敏诊断原因。
+- [ ] helper 采集本机内网 IP 列表：枚举活动网卡，过滤 loopback、link-local、未启用网卡和明显无效地址，支持多网卡多 IP。
+- [ ] helper 获取本机公网 IP：优先调用自家服务端公网 IP 查询接口；失败时填充 `unknown`，默认不阻断短信发送，除非远程策略要求 fail closed。
 - [ ] helper 返回短信发送成功后，驱动 CP 进入 60 秒重新发送倒计时。
 - [ ] 支持 `verify_sms` 请求。
 - [ ] 支持 `verify_second_password` 请求。
@@ -142,6 +146,11 @@
 - [ ] 定义手机号文件路径配置，例如 `PhoneFilePath=C:\ProgramData\rdp_auth\phone.txt`，仅在 `PhoneSource=file` 时生效。
 - [ ] `auth_core` 提供手机号校验和脱敏函数：合法手机号按 `138****8888` 格式展示，非法手机号不暴露前后缀。
 - [ ] `auth_config` 在文件读取模式下读取真实手机号并校验；文件缺失、为空或格式非法时 fail closed，不允许发送短信，并记录脱敏诊断原因。
+- [ ] 定义公网 IP 查询配置，例如 `PublicIpEndpoint`、`PublicIpTimeoutSeconds`、`RequirePublicIpForSms`，默认公网 IP 获取失败不阻断短信。
+- [ ] 定义 IP 审计日志策略，例如 `AuditIpLogging=full|masked|off`，区分诊断日志和审计日志对 IP 字段的记录方式。
+- [ ] 定义远程配置缓存路径，例如 `C:\ProgramData\rdp_auth\config\remote_policy.json`，并定义版本号、更新时间、TTL 和完整性校验字段。
+- [ ] 支持远程配置下发：helper 启动时拉取配置，按 `ConfigRefreshSeconds` 周期刷新；拉取失败时使用最后一次有效配置，从未成功拉取时使用本地安全默认值。
+- [ ] 远程配置不得关闭所有认证方式或绕过 MFA；若下发非法策略，自动回退默认认证方式集合并记录审计告警。
 - [ ] 支持从配置文件读取认证方式开关，并明确与注册表策略的优先级。
 - [ ] 新增 `AuthMethodPolicy` 或等效结构，统一表达哪些认证方式可展示、可提交。
 - [ ] 配置中关闭的认证方式必须同时影响 UI 展示和提交校验，避免通过手工构造字段值提交已禁用方式。
@@ -162,9 +171,12 @@
 
 - [ ] `auth_api` 封装 HTTP client。
 - [ ] 实现 `POST /api/host_instance/getSSHLoginCode`。
+- [ ] 短信发送 API 请求携带 `host_public_ip`，并可携带 `client_ip`、`host_private_ips`、`host_uuid`、`session_id` 等审计上下文；服务端仍应以请求来源 IP 做可信校验。
 - [ ] 实现短信验证码校验接口，若路径未确定则先以配置项方式注入。
 - [ ] 实现二次密码校验接口，若路径未确定则先以配置项方式注入。
 - [ ] 实现 `POST /api/host_instance/postSSHLoginLog`。
+- [ ] 登录日志上报接口携带 client_ip、host_public_ip、host_private_ips、host_uuid、认证方式、认证结果和耗时，失败原因使用诊断码而不是敏感原文。
+- [ ] 实现远程配置拉取接口，例如 `GET /api/host_instance/config` 或等效路径，响应包含配置版本、TTL、策略内容和签名/校验字段。
 - [ ] 定义统一 API 错误码和用户提示文案。
 - [ ] 所有请求设置连接超时和总超时。
 - [ ] 所有日志脱敏手机号、验证码、密码、token。
@@ -208,11 +220,13 @@
 - [ ] `register_tool status` / `health` 显示当前启用的认证方式，便于排查配置文件是否生效。
 - [x] 初始化 `C:\ProgramData\rdp_auth` 目录。
 - [x] 初始化日志目录。
+- [ ] 初始化远程配置缓存目录，例如 `C:\ProgramData\rdp_auth\config`。
 - [x] 提供健康检查命令。
 - [x] 提供应急禁用命令。
 - [x] 编写 VM 测试和恢复文档。
 - [ ] `register_tool` 使用 `anyhow` 为安装、卸载、注册表读写和路径校验错误补充上下文，命令行输出保持中文可读。
 - [ ] `register_tool health` 增加日志配置检查：显示日志目录是否存在、最近诊断日志路径、日志文件大小和最近修改时间。
+- [ ] `register_tool health` 增加审计和配置检查：显示本机内网 IP、公网 IP 查询状态、远程配置版本、最后拉取时间、缓存文件状态和配置完整性校验结果。
 - [ ] 中文注释解释每个注册表项的作用和删除风险。
 
 ## 阶段 11：测试计划
@@ -226,6 +240,10 @@
 - [ ] 单元测试：手机号脱敏规则，`13812348888` 显示为 `138****8888`，非法手机号显示为安全占位文案。
 - [ ] 单元测试：文件读取手机号模式会禁用手机号输入框，并且 UI 只显示脱敏手机号。
 - [ ] 单元测试：手动输入手机号模式下，手机号不合法时禁止发送验证码并显示错误提示。
+- [ ] 单元测试：本机内网 IP 枚举会过滤 loopback、link-local、未启用网卡，并保留多网卡有效地址。
+- [ ] 单元测试：公网 IP 获取失败时按策略返回 `unknown` 或 fail closed。
+- [ ] 单元测试：审计日志字段序列化包含 client_ip、host_public_ip、host_private_ips、host_uuid、session_id，且不包含手机号、验证码、密码、token。
+- [ ] 单元测试：远程配置版本、TTL、签名/校验字段解析，非法配置不能覆盖本地有效配置。
 - [ ] 集成测试：认证超时后自动断开当前 RDP 会话。
 - [x] 单元测试：RDP 原始 Provider CLSID 可通过跨进程 handoff 文件恢复。
 - [x] 单元测试：Credential Provider 诊断日志会清理换行符，避免单条日志被拆行。
@@ -239,6 +257,8 @@
 - [ ] 单元测试：日志脱敏函数会过滤手机号、验证码、密码、token、serialization 字节和换行符。
 - [ ] 集成测试：`tracing-appender` 日志能写入 `C:\ProgramData\rdp_auth\logs` 并按配置轮转。
 - [ ] 集成测试：helper mock 服务。
+- [ ] 集成测试：`send_sms` 请求会携带 host_public_ip，并在公网 IP 获取失败时按策略降级。
+- [ ] 集成测试：远程配置拉取、缓存、周期刷新和失败回退。
 - [ ] 集成测试：CP 调 helper 超时。
 - [x] VM 测试：RDP + NLA + 正确凭证 + MFA 成功。（当前为 pass-through 验证，真实 MFA 接入后需复测）
 - [ ] VM 测试：RDP + NLA + 正确凭证 + MFA 失败。
@@ -253,6 +273,9 @@
 - [ ] Windows 密码和 RDP 原始凭证 serialization 不写日志。
 - [ ] 验证码、二次密码、token 不写日志。
 - [ ] 手机号必须按脱敏格式写入 UI、诊断日志和 API 日志；禁止记录配置文件中的完整手机号。
+- [ ] client_ip、host_public_ip、host_private_ips 作为审计字段管理；诊断日志是否记录完整 IP 必须受配置控制。
+- [ ] 远程配置必须校验来源和完整性，至少包含版本号、更新时间、TTL 和签名或 HMAC；校验失败不得生效。
+- [ ] 远程配置下发不得绕过 MFA、不得关闭所有认证方式、不得禁用 fail closed 安全默认值。
 - [x] Credential Provider 诊断日志只记录阶段、PID、session、Provider GUID、serialization 长度和错误码，写入失败不影响 LogonUI。
 - [ ] 所有 `tracing` 字段必须先经过脱敏策略评审，禁止直接使用 `?struct` 或 `%struct` 记录包含敏感字段的结构体。
 - [ ] 所有 `anyhow::Context` 文案不得拼接敏感值；需要排查时使用脱敏 ID、长度、哈希前缀或内部错误码。
