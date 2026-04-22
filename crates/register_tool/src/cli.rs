@@ -1,10 +1,14 @@
 //! 命令行解析。
 //!
-//! 当前命令很少，先不用引入完整 CLI 框架，避免安装工具在早期阶段产生不必要依赖。
-//! 如果后续加入服务安装、健康检查、应急禁用等命令，再考虑切换到 clap。
+//! `register_tool` 的子命令已经覆盖安装、恢复、健康检查和配置导入导出。
+//! 继续手写解析很容易遗漏缺参、未知参数和帮助输出细节，所以这里统一交给
+//! `clap` 维护语法和错误提示；业务层仍然使用本模块导出的 `Command`，避免
+//! 注册表写入逻辑直接依赖 CLI 框架。
 
 use std::ffi::OsString;
 use std::path::PathBuf;
+
+use clap::{Args, CommandFactory, Parser, Subcommand, error::ErrorKind};
 
 use crate::paths::normalize_dll_path;
 
@@ -31,103 +35,134 @@ pub enum Command {
     Help,
 }
 
+#[derive(Debug, Parser)]
+#[command(
+    name = "register_tool",
+    about = "RDP 二次认证 Credential Provider 安装和维护工具",
+    disable_version_flag = true
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<TopCommand>,
+}
+
+#[derive(Debug, Subcommand)]
+enum TopCommand {
+    /// 写入 Credential Provider COM 和 LogonUI 注册表项。
+    Install(InstallArgs),
+    /// 删除本 Provider 的注册表项。
+    Uninstall,
+    /// 只读取注册表，不修改系统。
+    Status,
+    /// 检查注册表、DLL 路径、配置和 ProgramData 目录。
+    Health,
+    /// 应急删除 LogonUI 枚举入口，保留 COM 注册信息。
+    Disable,
+    /// 重新创建 LogonUI 枚举入口。
+    Enable,
+    /// 导出或导入加密业务配置。
+    #[command(subcommand)]
+    Config(ConfigCommand),
+}
+
+#[derive(Debug, Args)]
+struct InstallArgs {
+    /// credential_provider.dll 的绝对路径。
+    #[arg(long = "dll", value_name = "credential_provider.dll")]
+    dll_path: PathBuf,
+}
+
+#[derive(Debug, Subcommand)]
+enum ConfigCommand {
+    /// 导出明文 TOML，供管理员短期编辑。
+    Export(ConfigExportArgs),
+    /// 导入明文 TOML，校验后立即加密写回运行期配置。
+    Import(ConfigImportArgs),
+}
+
+#[derive(Debug, Args)]
+struct ConfigExportArgs {
+    /// 明文 TOML 导出路径。
+    #[arg(long = "out", value_name = "rdp_auth.toml")]
+    output_path: PathBuf,
+}
+
+#[derive(Debug, Args)]
+struct ConfigImportArgs {
+    /// 明文 TOML 导入路径。
+    #[arg(long = "in", value_name = "rdp_auth.toml")]
+    input_path: PathBuf,
+}
+
 /// 解析命令行参数。
 pub fn parse_args<I>(args: I) -> Result<Command, String>
 where
     I: IntoIterator<Item = OsString>,
 {
-    let args: Vec<OsString> = args.into_iter().collect();
-    let Some(command) = args.first().and_then(|value| value.to_str()) else {
-        return Ok(Command::Help);
-    };
+    let mut argv = vec![OsString::from("register_tool")];
+    argv.extend(args);
 
-    match command {
-        "install" => parse_install(&args[1..]),
-        "uninstall" => Ok(Command::Uninstall),
-        "status" => Ok(Command::Status),
-        "health" => Ok(Command::Health),
-        "disable" => Ok(Command::Disable),
-        "enable" => Ok(Command::Enable),
-        "config" => parse_config(&args[1..]),
-        "-h" | "--help" | "help" => Ok(Command::Help),
-        other => Err(format!("未知命令 `{other}`，请使用 --help 查看用法")),
+    match Cli::try_parse_from(argv) {
+        Ok(cli) => cli.into_command(),
+        Err(error) if error.kind() == ErrorKind::DisplayHelp => Ok(Command::Help),
+        Err(error) => Err(error.to_string()),
     }
 }
 
-fn parse_config(args: &[OsString]) -> Result<Command, String> {
-    let Some(subcommand) = args.first().and_then(|value| value.to_str()) else {
-        return Err("config 需要子命令: export 或 import".to_owned());
-    };
-
-    match subcommand {
-        "export" => parse_config_path_arg(&args[1..], "--out")
-            .map(|output_path| Command::ConfigExport { output_path }),
-        "import" => parse_config_path_arg(&args[1..], "--in")
-            .map(|input_path| Command::ConfigImport { input_path }),
-        other => Err(format!(
-            "config 不支持子命令 `{other}`，请使用 export 或 import"
-        )),
-    }
+pub fn help_text() -> String {
+    Cli::command().render_long_help().to_string()
 }
 
-fn parse_config_path_arg(args: &[OsString], flag_name: &str) -> Result<PathBuf, String> {
-    let mut path = None;
-    let mut index = 0;
+impl Cli {
+    fn into_command(self) -> Result<Command, String> {
+        let Some(command) = self.command else {
+            return Ok(Command::Help);
+        };
 
-    while index < args.len() {
-        match args[index].to_str() {
-            Some(flag) if flag == flag_name => {
-                let Some(value) = args.get(index + 1) else {
-                    return Err(format!("config {flag_name} 缺少路径"));
-                };
-                path = Some(PathBuf::from(value));
-                index += 2;
-            }
-            Some(flag) => return Err(format!("config 不支持参数 `{flag}`")),
-            None => return Err("参数包含非 Unicode 内容，无法安全读取配置路径".to_owned()),
+        match command {
+            TopCommand::Install(args) => Ok(Command::Install {
+                dll_path: normalize_dll_path(args.dll_path)?,
+            }),
+            TopCommand::Uninstall => Ok(Command::Uninstall),
+            TopCommand::Status => Ok(Command::Status),
+            TopCommand::Health => Ok(Command::Health),
+            TopCommand::Disable => Ok(Command::Disable),
+            TopCommand::Enable => Ok(Command::Enable),
+            TopCommand::Config(config) => Ok(config.into_command()),
         }
     }
-
-    path.ok_or_else(|| format!("config 需要显式传入 {flag_name} <path>"))
 }
 
-fn parse_install(args: &[OsString]) -> Result<Command, String> {
-    let mut dll_path = None;
-    let mut index = 0;
-
-    while index < args.len() {
-        match args[index].to_str() {
-            Some("--dll") => {
-                let Some(value) = args.get(index + 1) else {
-                    return Err("install --dll 缺少 DLL 路径".to_owned());
-                };
-                dll_path = Some(normalize_dll_path(PathBuf::from(value))?);
-                index += 2;
-            }
-            Some(flag) => {
-                return Err(format!("install 不支持参数 `{flag}`"));
-            }
-            None => {
-                return Err("参数包含非 Unicode 内容，无法安全写入注册表".to_owned());
-            }
+impl ConfigCommand {
+    fn into_command(self) -> Command {
+        match self {
+            ConfigCommand::Export(args) => Command::ConfigExport {
+                output_path: args.output_path,
+            },
+            ConfigCommand::Import(args) => Command::ConfigImport {
+                input_path: args.input_path,
+            },
         }
     }
-
-    let Some(dll_path) = dll_path else {
-        return Err("install 需要显式传入 --dll <credential_provider.dll>".to_owned());
-    };
-
-    Ok(Command::Install { dll_path })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Command, parse_args};
+    use super::{Command, help_text, parse_args};
     use std::ffi::OsString;
 
     #[test]
     fn parses_help_when_no_args() {
         assert_eq!(parse_args(Vec::<OsString>::new()).unwrap(), Command::Help);
+    }
+
+    #[test]
+    fn parses_help_flag() {
+        assert_eq!(
+            parse_args([OsString::from("--help")]).unwrap(),
+            Command::Help
+        );
+        assert!(help_text().contains("config"));
     }
 
     #[test]

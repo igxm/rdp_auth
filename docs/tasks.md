@@ -343,6 +343,7 @@
 - [x] 提供健康检查命令。
 - [x] 提供应急禁用命令。
 - [x] 编写 VM 测试和恢复文档。
+- [x] `register_tool` CLI 迁移到 `clap`，由 CLI 框架统一处理子命令、必填参数、未知参数和帮助文本，减少手写解析分支。
 - [ ] `register_tool` 使用 `anyhow` 为安装、卸载、注册表读写和路径校验错误补充上下文，命令行输出保持中文可读。
 - [ ] `register_tool health` 增加日志配置检查：显示日志目录是否存在、最近诊断日志路径、日志文件大小和最近修改时间。
 - [ ] `register_tool health` 增加审计和配置检查：显示本机内网 IP、公网 IP 查询状态、远程配置版本、最后拉取时间、缓存文件状态和配置完整性校验结果。
@@ -395,7 +396,7 @@
 - [ ] 集成测试：`send_sms` 请求会携带 host_public_ip，并在公网 IP 获取失败时按策略降级。
 - [ ] 集成测试：远程配置拉取、缓存、周期刷新和失败回退。
 - [ ] 集成测试：远程配置缓存以 `.enc` 加密文件落盘，helper 重启后可解密加载最后一次有效配置。
-- [ ] 集成测试：`register_tool config export/import` 在真实机器码和注册表配置路径下完成明文 TOML 导出、重新导入、旧 `.enc` 备份和 health 复查。
+- [x] 集成测试：`register_tool config export/import` 在真实机器码和注册表配置路径下完成明文 TOML 导出、重新导入、旧 `.enc` 备份和 health 复查。
 - [ ] 集成测试：CP 调 helper 超时。
 - [ ] 集成测试：Tauri 管理 GUI 未安装、WebView2 缺失或 GUI 启动失败时，核心 helper 仍可启动，CP 仍按 helper/IPC/fail closed 策略工作。
 - [ ] 集成测试：Tauri 管理 GUI 保存配置会走 `register_tool config import` 或等效管理 IPC，加密配置写入失败时不得破坏上一份有效 `.enc` 文件。

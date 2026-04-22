@@ -13,7 +13,7 @@ mod registry;
 use std::io::Write;
 
 use auth_config::{export_app_config_toml_to_path, import_app_config_toml_from_path};
-use cli::{Command, parse_args};
+use cli::{Command, help_text, parse_args};
 use registry::{
     ProviderRegistration, disable_provider, enable_provider, health_check, query_app_config,
     query_login_policy, query_status, register_provider, unregister_provider,
@@ -88,28 +88,7 @@ fn run() -> Result<(), String> {
 }
 
 fn print_help() {
-    print_line(
-        "\
-register_tool install --dll <credential_provider.dll>
-register_tool uninstall
-register_tool status
-register_tool health
-register_tool disable
-register_tool enable
-register_tool config export --out <rdp_auth.toml>
-register_tool config import --in <rdp_auth.toml>
-
-说明:
-  install   写入 Credential Provider COM 和 LogonUI 注册表项，需要管理员权限。
-  uninstall 删除本 Provider 的注册表项，需要管理员权限。
-  status    只读取注册表，不修改系统。
-  health    检查注册表、DLL 路径和 ProgramData 目录。
-  disable   应急删除 LogonUI 枚举入口，保留 COM 注册信息。
-  enable    重新创建 LogonUI 枚举入口。
-  config export  导出明文 TOML，供管理员短期编辑；不要长期保存。
-  config import  导入明文 TOML，校验后立即加密写回运行期配置。
-",
-    );
+    print_line(&help_text());
 }
 
 fn print_line(message: &str) {

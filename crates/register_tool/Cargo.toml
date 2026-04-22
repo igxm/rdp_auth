@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 auth_config = { path = "../auth_config" }
+clap = { version = "4.5.50", features = ["derive"] }
 credential_provider = { path = "../credential_provider" }
 windows-core = "0.62.2"
 winreg = "0.56.0"
