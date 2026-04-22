@@ -8,6 +8,7 @@
 - 代码必须按功能或逻辑分层，不允许把 COM 导出、类工厂、Provider、Credential、字段定义、凭证序列化、IPC、配置读取、API 调用等长期堆在同一个文件。
 - Credential Provider DLL 只做 RDP 凭证接收、二次认证 UI、调用本地 helper、认证通过后转交可由 LogonUI/LSA 消费的凭证序列化数据。
 - 网络请求、注册表读取、业务审计日志、策略判断都放到本地 helper，避免 LogonUI 进程被阻塞或拖垮；Credential Provider DLL 只允许写入轻量脱敏诊断日志，且日志失败不能影响登录流程。
+- 核心 helper 必须保持无 UI、可后台运行、可短超时响应 IPC；后续如引入 Tauri，只作为独立管理员配置 GUI，不作为 Credential Provider 登录链路或 helper 核心进程的运行依赖。
 - 第一阶段不隐藏系统默认 Credential Provider，确认 RDP pass-through 链路稳定后再实现过滤器，降低锁死测试机风险。
 
 ## 当前优先级
@@ -16,15 +17,16 @@
 2. 再把超时、缺失 serialization 等待窗口、短信重新发送时间、helper IPC 超时、session 状态 TTL 等迁移到统一 TOML 配置，并让 `register_tool health` 能显示当前生效值。
 3. 然后实现 helper / IPC 的 mock 服务和 helper 内存态 session 跟踪，把 CP 内的 mock 逻辑逐步迁移到 helper，保持 Credential Provider DLL 轻量。
 4. 在 helper/IPC 稳定之后接入真实 API、远程配置、手机号文件、审计日志和公网/内网 IP 采集。
-5. 最后接入微信扫码等扩展认证方式；该阶段不应阻塞 RDP 主链路和锁屏断开问题的收敛。
+5. Tauri 管理 GUI 只在核心 helper、加密配置和 `register_tool` 导入/导出能力稳定后开发，用于管理员查看 health、编辑配置和触发维护命令，不进入登录安全链路。
+6. 最后接入微信扫码等扩展认证方式；该阶段不应阻塞 RDP 主链路和锁屏断开问题的收敛。
 
 ## 任务可行性分级
 
 - **A级：已完成或只需复测确认。** Workspace 骨架、Credential Provider 加载、RDP inbound serialization 接收、Kerberos interactive/unlock 重新打包、mock MFA、MFA 超时断开、缺失 serialization 快速断开、短信按钮倒计时刷新等已经有实现记录，后续重点是 VM 回归和日志补齐。
 - **B级：可直接开发，风险较低。** 统一 TOML 配置、配置默认值、`register_tool health` 展示、`auth_core` 手机号校验、日志/错误处理依赖、配置解析单元测试、文档更新等不依赖 Windows 登录链路，可先在普通进程和单元测试里稳定。
-- **C级：依赖 helper/IPC 前置。** Windows session notification、helper 内存态 `SessionAuthState`、锁屏后立即断开策略、真实短信/二次密码 API、手机号文件读取、远程配置、审计上下文、公网/内网 IP 采集都应放在 helper 内完成；在 helper mock 服务可用前，Credential Provider 不应直接承接这些复杂逻辑。
+- **C级：依赖 helper/IPC 前置。** Windows session notification、helper 内存态 `SessionAuthState`、锁屏后立即断开策略、真实短信/二次密码 API、手机号文件读取、远程配置、审计上下文、公网/内网 IP 采集都应放在 helper 内完成；在 helper mock 服务可用前，Credential Provider 不应直接承接这些复杂逻辑。Tauri 管理 GUI 也属于该级别的后置任务，必须通过 helper 或 register_tool 管理接口工作，不能反向成为 helper 的前置依赖。
 - **D级：高风险，必须 VM 验证后定版。** Credential Provider Filter 隐藏默认 Provider、`CPUS_LOGON` 与 `CPUS_UNLOCK_WORKSTATION` 差异、RDP/NLA serialization 慢到窗口、跨进程 session 状态判断、LogonUI 字段刷新线程模型等都属于系统行为相关任务，不能只靠代码审查判断可行；Windows Server 2008 R2 兼容暂不纳入当前目标。
-- **暂缓项。** 真实 API、微信扫码、远程配置自动更新、复杂审计上报在 RDP 主链路、helper/IPC 和 VM 兼容矩阵稳定前不作为当前收敛目标，避免把问题定位范围扩大。
+- **暂缓项。** 真实 API、微信扫码、远程配置自动更新、复杂审计上报、Tauri 管理 GUI 美化和自动更新在 RDP 主链路、helper/IPC 和 VM 兼容矩阵稳定前不作为当前收敛目标，避免把问题定位范围扩大。
 
 ## 配置与文件读取边界
 
@@ -174,6 +176,8 @@
 
 ## 阶段 5：本地 helper 与 IPC
 
+- [ ] 明确 helper 形态：`remote_auth` 是无 UI 的核心后台进程/服务，负责 IPC、session notification、配置解密、API、审计和内存态 session；不得依赖 Tauri、WebView2 或前端资源才能启动。
+- [ ] 明确 GUI 边界：后续 Tauri 仅作为独立管理员配置工具，通过 helper 管理 IPC 或 `register_tool` 能力读写配置和查询状态；Credential Provider 永远不直接调用 Tauri GUI。
 - [ ] `remote_auth` 启动命名管道服务。
 - [ ] 将 `remote_auth` 设计为可常驻的 helper 进程，后续可由安装工具注册启动路径；启动失败不能阻塞 LogonUI。
 - [ ] helper 内存中维护 `SessionAuthState`，按 Windows session id 记录是否已成功完成 RDP MFA、最后更新时间、最近一次会话事件和诊断状态码，不保存用户名、密码、验证码、token 或 serialization。
@@ -205,6 +209,7 @@
 - [ ] helper 使用 `tracing` 输出结构化诊断日志，记录 request_id、认证方式、耗时、结果码和脱敏错误原因。
 - [ ] helper 使用 `anyhow` 作为入口层错误返回，IPC 协议错误和业务错误使用 `thiserror` 定义可匹配类型。
 - [ ] 中文注释解释为何 CP DLL 不直接发网络请求。
+- [ ] 中文注释解释为何核心 helper 不做 Tauri GUI：登录链路需要服务化、短超时和低依赖，GUI 崩溃或 WebView2 缺失不得影响 RDP MFA fail closed 策略。
 
 ## 阶段 6：配置读取
 
@@ -301,13 +306,31 @@
 - [x] 增加安全模式 / 离线恢复文档。
 - [x] 中文注释解释过滤条件，避免维护人员误改导致无法登录。
 
+## 阶段 10A：Tauri 管理 GUI（后置运维工具）
+
+- [ ] 明确产品定位：Tauri GUI 是管理员登录桌面后的配置/运维工具，不参与 LogonUI、Credential Provider、Winlogon、LSA 或 RDP 断开决策。
+- [ ] 明确进程边界：核心 helper 继续以无 UI 进程/服务运行；Tauri GUI 独立启动、独立崩溃、独立升级，关闭 GUI 不影响 helper、CP 和 fail closed 策略。
+- [ ] 明确依赖边界：WebView2、前端资源、Tauri 插件、窗口事件循环和 GUI 自动更新都不得成为 RDP MFA 登录链路的前置依赖。
+- [ ] 新增独立 crate 或应用目录，例如 `crates/admin_gui` 或 `apps/admin_gui`，避免把 Tauri 配置、前端代码和后台 helper 主程序混在一起。
+- [ ] GUI 只通过受控管理接口操作配置：优先复用 `register_tool config import/export/status/health` 能力，或调用 helper 的管理员管理 IPC；不得直接写业务注册表项。
+- [ ] GUI 编辑配置时只生成临时明文 TOML 并立即导入加密 `.enc` 文件；界面和日志不得长期保存明文配置、机器码、API token、手机号、验证码、密码或 serialization。
+- [ ] GUI 提供配置页：展示 `[auth_methods]`、`[mfa]`、`[phone]`、`[api]`、`[audit]`、`[remote_config]`、`[logging]` 的可编辑项，并在保存前执行与 `auth_config` 一致的校验。
+- [ ] GUI 提供状态页：展示 `register_tool health` 等价信息，包括 CP 注册状态、helper 路径、helper 连通性、配置加密状态、配置最后修改时间、日志目录和远程配置缓存状态。
+- [ ] GUI 提供应急页：展示 `DisableMfa`、RDP/本地 MFA 策略和恢复提示；危险操作必须有明确确认，且调用现有工具或管理 IPC 完成。
+- [ ] GUI 不展示或导出解密后的敏感字段；需要排查时仅显示脱敏值、错误码、文件路径、版本、时间戳和布尔状态。
+- [ ] GUI 打包必须采用 per-machine 安装或与主安装器协同安装，不能把核心 CP/helper 安装到用户私有目录；如随包安装 WebView2 或固定 runtime，必须记录在安装文档和 health 中。
+- [ ] GUI 首版不做自动更新；如果未来接入自动更新，必须和 CP/helper 更新解耦，并保留离线安装与回滚方案。
+- [ ] GUI 不作为第二里程碑或锁屏断开 bug 的阻塞项；只有核心 helper、IPC、AES 配置、导入/导出和 health 稳定后再启动开发。
+
 ## 阶段 10：安装、卸载与恢复
 
 - [x] `register_tool install` 写入 Credential Provider 注册表项。
 - [x] `register_tool uninstall` 删除注册表项。
 - [ ] 注册 helper 路径。
 - [ ] `register_tool install` 注册或记录 helper 启动路径，并确保 helper 可访问统一配置文件和日志目录。
+- [ ] `register_tool install` 只把核心 helper 注册为后台进程/服务；Tauri GUI 如需安装，作为独立可选组件登记，不影响 CP/helper 注册成功。
 - [ ] `register_tool health` 检查 helper 是否可启动/可连通、命名管道是否可用、session notification 是否初始化成功。
+- [ ] `register_tool health` 显示 Tauri 管理 GUI 是否安装、安装路径和 WebView2/runtime 检查结果；GUI 未安装不得视为登录链路故障。
 - [ ] `register_tool status` / `health` 显示当前启用的认证方式，便于排查配置文件是否生效。
 - [x] `register_tool status` / `health` 显示当前 MFA 超时、缺失 serialization 等待窗口、短信重新发送时间和配置来源，便于排查 VM 行为。
 - [x] `register_tool status` / `health` 显示 helper session 状态策略：状态 TTL、首次登录等待窗口、已认证会话短等待窗口和 IPC 超时。
@@ -316,6 +339,7 @@
 - [ ] 初始化远程配置缓存目录，例如 `C:\ProgramData\rdp_auth\config`。
 - [ ] `register_tool install` 默认创建加密配置文件，不创建长期明文 TOML；如果发现旧明文配置，提示迁移或自动导入后加密。（当前默认新建 `.enc` 已完成，旧明文发现/迁移待补）
 - [ ] `register_tool uninstall` 不默认删除加密配置文件和加密备份，避免误删管理员配置；如新增清理参数，必须明确提示风险。
+- [ ] `register_tool uninstall` 区分核心登录组件和 Tauri 管理 GUI：卸载 GUI 不删除 CP/helper，卸载核心组件时默认保留加密配置和备份。
 - [x] 提供健康检查命令。
 - [x] 提供应急禁用命令。
 - [x] 编写 VM 测试和恢复文档。
@@ -372,6 +396,9 @@
 - [ ] 集成测试：远程配置拉取、缓存、周期刷新和失败回退。
 - [ ] 集成测试：远程配置缓存以 `.enc` 加密文件落盘，helper 重启后可解密加载最后一次有效配置。
 - [ ] 集成测试：CP 调 helper 超时。
+- [ ] 集成测试：Tauri 管理 GUI 未安装、WebView2 缺失或 GUI 启动失败时，核心 helper 仍可启动，CP 仍按 helper/IPC/fail closed 策略工作。
+- [ ] 集成测试：Tauri 管理 GUI 保存配置会走 `register_tool config import` 或等效管理 IPC，加密配置写入失败时不得破坏上一份有效 `.enc` 文件。
+- [ ] 集成测试：Tauri 管理 GUI health/status 页面只显示脱敏状态，不显示解密后的 API token、手机号、机器码、验证码、密码或 serialization。
 - [x] VM 测试：RDP + NLA + 正确凭证 + mock MFA 成功，Kerberos interactive packed serialization 已验证进入桌面；真实 MFA 接入后需复测。
 - [ ] VM 测试：RDP + NLA + 正确凭证 + MFA 失败。
 - [ ] VM 测试：首次 RDP 登录时，即使 `GetCredentialCount` / `GetCredentialAt` 早于 `SetSerialization`，也不应被缺失 serialization 保护误断。
@@ -382,6 +409,7 @@
 - [ ] VM 测试：helper 重启后内存状态丢失时，系统仍按首次登录等待窗口处理，不得放行孤立 MFA。
 - [ ] VM 测试：session logoff/disconnect 后 helper 清理状态，后续新 session 不得复用旧认证标记。
 - [ ] VM 测试：短信按钮点击后逐秒更新 `重新发送(n)`，归零后恢复 `发送验证码` 并可再次点击。
+- [ ] VM 测试：安装 Tauri 管理 GUI 后，RDP 首次登录、锁屏返回断开、MFA 超时断开和 helper IPC 超时行为不发生变化。
 - [ ] VM 测试：Windows Server 2008 R2 暂不纳入当前测试目标；如未来恢复兼容目标，再验证机器码注册表写入、AES 加密配置读取和重启后解密。
 - [ ] VM 测试：服务端不可达时默认拒绝登录。
 - [x] VM 测试：系统默认 Provider 未隐藏时可恢复登录。
@@ -409,6 +437,8 @@
 - [ ] helper session 内存状态只保存 session id、状态枚举、时间戳和脱敏诊断码，不保存用户名、手机号、密码、验证码、token 或 serialization。
 - [ ] helper session 状态必须随 logoff/disconnect/session end/TTL 过期清理，避免 Windows session id 复用导致错误断开。
 - [ ] CP 查询 helper session 状态时必须设置短超时，helper 异常时默认 fail closed，不能因为状态服务不可用而绕过 MFA。
+- [ ] Tauri 管理 GUI 不得持有 Windows 一次登录密码、RDP serialization、验证码、二次密码、API token 或机器码；所有配置写入必须经加密层和权限校验。
+- [ ] Tauri 管理 GUI 的安装、缺失、崩溃、升级失败或 WebView2/runtime 异常不得影响 CP/helper 的登录链路、session 状态清理和 fail closed 策略。
 - [ ] 默认 fail closed：二次认证服务不可用时拒绝放行。
 - [ ] 如需应急码，必须记录审计日志。
 - [ ] 所有错误提示区分用户可见文案和诊断日志。
