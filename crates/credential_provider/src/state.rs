@@ -14,7 +14,7 @@ use windows::Win32::UI::Shell::{CPUS_LOGON, CREDENTIAL_PROVIDER_USAGE_SCENARIO};
 use windows::core::GUID;
 
 use crate::diagnostics::log_event;
-use crate::serialization::InboundSerialization;
+use crate::serialization::{InboundSerialization, RemoteLogonCredential};
 
 /// 当前 Credential Provider 的 CLSID。
 ///
@@ -142,6 +142,10 @@ pub struct CredentialProviderState {
     pub has_inbound_serialization: bool,
     /// 深拷贝后的 RDP 原始凭证。不能保存 LogonUI 传入的原始指针。
     pub inbound_serialization: Option<InboundSerialization>,
+    /// 从 RDP/NLA authentication buffer 中解出的 Windows 一次凭证，用于 MFA 通过后重新打包。
+    ///
+    /// 该字段包含明文密码，只能留在内存中短暂使用，禁止写入日志或落盘。后续应补充安全清零。
+    pub remote_logon_credential: Option<RemoteLogonCredential>,
     /// 阶段 3 用于验证 pass-through 链路的开关；真实 MFA 接入后应由策略控制。
     pub allow_passthrough_without_mfa: bool,
     /// 当前使用场景。第一版只支持 RDP 登录常见的 logon/unlock 场景。
@@ -167,6 +171,7 @@ impl Default for CredentialProviderState {
             mfa_state: MfaState::Idle,
             has_inbound_serialization: false,
             inbound_serialization: None,
+            remote_logon_credential: None,
             allow_passthrough_without_mfa: false,
             usage_scenario: CPUS_LOGON,
             selected_method: AuthMethod::PhoneCode,

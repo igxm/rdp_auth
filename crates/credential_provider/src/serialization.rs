@@ -4,10 +4,17 @@
 //! 原始指针。这里将其深拷贝到 `Vec<u8>`，等 `GetSerialization` 放行时再用 COM 分配器
 //! 创建新的输出缓冲区交还给 LogonUI。
 
-use windows::Win32::Foundation::{E_OUTOFMEMORY, E_POINTER};
+use windows::Win32::Foundation::{E_FAIL, E_OUTOFMEMORY, E_POINTER, HANDLE, NTSTATUS};
+use windows::Win32::Security::Authentication::Identity::{
+    LSA_STRING, LsaConnectUntrusted, LsaDeregisterLogonProcess, LsaLookupAuthenticationPackage,
+    LsaNtStatusToWinError,
+};
+use windows::Win32::Security::Credentials::{
+    CRED_PACK_FLAGS, CredPackAuthenticationBufferW, CredUnPackAuthenticationBufferW,
+};
 use windows::Win32::System::Com::CoTaskMemAlloc;
 use windows::Win32::UI::Shell::CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION;
-use windows::core::{Error, GUID, Result};
+use windows::core::{Error, GUID, HRESULT, PCWSTR, PSTR, PWSTR, Result};
 
 /// 已深拷贝的 RDP 原始凭证序列化数据。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,6 +30,97 @@ pub struct InboundSerialization {
     pub source_provider: GUID,
     /// 原始序列化字节。这里绝不能写日志，因为里面可能包含密码或等价凭证材料。
     pub bytes: Vec<u8>,
+}
+
+/// 从 RDP/NLA authentication buffer 中解出的 Windows 一次凭证。
+///
+/// 这里会短暂保存明文密码，因为后续必须重新打包成 LSA 可接受的登录 serialization。
+/// 该结构绝不能派生 `Debug`，日志中也只能记录用户名/域名/密码长度等非敏感统计信息。
+#[derive(Clone, PartialEq, Eq)]
+pub struct RemoteLogonCredential {
+    pub username: String,
+    pub domain: String,
+    pub password: String,
+}
+
+impl std::fmt::Debug for RemoteLogonCredential {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RemoteLogonCredential")
+            .field("username_len", &self.username_len())
+            .field("domain_len", &self.domain_len())
+            .field("password_len", &self.password_len())
+            .finish()
+    }
+}
+
+impl RemoteLogonCredential {
+    pub fn username_len(&self) -> usize {
+        self.username.chars().count()
+    }
+
+    pub fn domain_len(&self) -> usize {
+        self.domain.chars().count()
+    }
+
+    pub fn password_len(&self) -> usize {
+        self.password.chars().count()
+    }
+
+    fn packed_username(&self) -> String {
+        if self.domain.trim().is_empty()
+            || self.username.contains('\\')
+            || self.username.contains('@')
+        {
+            self.username.clone()
+        } else {
+            format!("{}\\{}", self.domain, self.username)
+        }
+    }
+
+    /// MFA 通过后，重新打包为 LogonUI/LSA 能消费的 Negotiate 凭证。
+    ///
+    /// `UpdateRemoteCredential` 传入的 authentication buffer 只是远程登录阶段给系统 Provider
+    /// 使用的材料，直接原样返回会得到 `STATUS_LOGON_FAILURE`。这里改为使用解包出的 Windows
+    /// 一次凭证重新调用 `CredPackAuthenticationBufferW`，并填入 `Negotiate` authentication package。
+    pub fn pack_for_logon(&self, provider_clsid: GUID) -> Result<InboundSerialization> {
+        let authentication_package = lookup_negotiate_auth_package()?;
+        let username = wide_null(self.packed_username());
+        let password = wide_null(&self.password);
+        let mut size = 0_u32;
+        let _ = unsafe {
+            // SAFETY: 第一次调用按 Windows API 约定传空缓冲区以获取所需字节数。
+            CredPackAuthenticationBufferW(
+                CRED_PACK_FLAGS(0),
+                PCWSTR(username.as_ptr()),
+                PCWSTR(password.as_ptr()),
+                None,
+                &mut size,
+            )
+        };
+        if size == 0 {
+            return Err(Error::from_hresult(E_FAIL));
+        }
+
+        let mut bytes = vec![0_u8; size as usize];
+        unsafe {
+            // SAFETY: `bytes` 长度来自上一轮 API 返回；用户名和密码宽字符串均以 NUL 结尾。
+            CredPackAuthenticationBufferW(
+                CRED_PACK_FLAGS(0),
+                PCWSTR(username.as_ptr()),
+                PCWSTR(password.as_ptr()),
+                Some(bytes.as_mut_ptr()),
+                &mut size,
+            )?;
+        }
+        bytes.truncate(size as usize);
+
+        Ok(InboundSerialization {
+            authentication_package,
+            source_provider: provider_clsid,
+            bytes,
+        })
+    }
 }
 
 impl InboundSerialization {
@@ -82,6 +180,56 @@ impl InboundSerialization {
         self.source_provider
     }
 
+    /// 尝试把 RDP/NLA 传入的 authentication buffer 解包成 Windows 一次凭证。
+    ///
+    /// 该函数只在内存里处理明文凭证，不写日志、不落盘；调用方记录诊断信息时只能记录长度。
+    pub fn unpack_remote_logon_credential(&self) -> Result<RemoteLogonCredential> {
+        let mut username_len = 0_u32;
+        let mut domain_len = 0_u32;
+        let mut password_len = 0_u32;
+        let _ = unsafe {
+            // SAFETY: 第一次调用传空缓冲区获取长度；源字节来自已经深拷贝的 inbound serialization。
+            CredUnPackAuthenticationBufferW(
+                CRED_PACK_FLAGS(0),
+                self.bytes.as_ptr().cast(),
+                self.bytes.len() as u32,
+                None,
+                &mut username_len,
+                None,
+                Some(&mut domain_len),
+                None,
+                &mut password_len,
+            )
+        };
+        if username_len == 0 || password_len == 0 {
+            return Err(Error::from_hresult(E_FAIL));
+        }
+
+        let mut username = vec![0_u16; username_len as usize];
+        let mut domain = vec![0_u16; domain_len.max(1) as usize];
+        let mut password = vec![0_u16; password_len as usize];
+        unsafe {
+            // SAFETY: 三个缓冲区长度来自 Windows API 返回值，均可写；源字节在调用期间保持有效。
+            CredUnPackAuthenticationBufferW(
+                CRED_PACK_FLAGS(0),
+                self.bytes.as_ptr().cast(),
+                self.bytes.len() as u32,
+                Some(PWSTR(username.as_mut_ptr())),
+                &mut username_len,
+                Some(PWSTR(domain.as_mut_ptr())),
+                Some(&mut domain_len),
+                Some(PWSTR(password.as_mut_ptr())),
+                &mut password_len,
+            )?;
+        }
+
+        Ok(RemoteLogonCredential {
+            username: wide_buffer_to_string(&username),
+            domain: wide_buffer_to_string(&domain),
+            password: wide_buffer_to_string(&password),
+        })
+    }
+
     /// 将缓存的原始凭证写回，并允许调用方指定输出 Provider CLSID。
     ///
     /// Filter 在 RDP MFA 开启时需要把远程凭证临时重定向到本项目 Provider；关闭 RDP
@@ -126,9 +274,64 @@ impl InboundSerialization {
     }
 }
 
+fn lookup_negotiate_auth_package() -> Result<u32> {
+    let mut handle = HANDLE::default();
+    let status = unsafe {
+        // SAFETY: 输出句柄指向当前栈变量；成功后必须调用 `LsaDeregisterLogonProcess` 释放。
+        LsaConnectUntrusted(&mut handle)
+    };
+    ntstatus_to_result(status)?;
+
+    let mut package_name = b"Negotiate".to_vec();
+    let lsa_string = LSA_STRING {
+        Length: package_name.len() as u16,
+        MaximumLength: package_name.len() as u16,
+        Buffer: PSTR(package_name.as_mut_ptr()),
+    };
+    let mut authentication_package = 0_u32;
+    let status = unsafe {
+        // SAFETY: `handle` 来自 `LsaConnectUntrusted`，`lsa_string` 指向调用期间有效的 ASCII 字节。
+        LsaLookupAuthenticationPackage(handle, &lsa_string, &mut authentication_package)
+    };
+    let result = ntstatus_to_result(status).map(|_| authentication_package);
+    unsafe {
+        // SAFETY: handle 来自 LSA，释放失败不影响当前返回的主错误。
+        let _ = LsaDeregisterLogonProcess(handle);
+    }
+    result
+}
+
+fn ntstatus_to_result(status: NTSTATUS) -> Result<()> {
+    if status.0 == 0 {
+        Ok(())
+    } else {
+        let win32_error = unsafe {
+            // SAFETY: 纯转换函数，不访问外部内存。
+            LsaNtStatusToWinError(status)
+        };
+        Err(Error::from_hresult(HRESULT::from_win32(win32_error)))
+    }
+}
+
+fn wide_null(value: impl AsRef<str>) -> Vec<u16> {
+    value
+        .as_ref()
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect()
+}
+
+fn wide_buffer_to_string(buffer: &[u16]) -> String {
+    let len = buffer
+        .iter()
+        .position(|value| *value == 0)
+        .unwrap_or(buffer.len());
+    String::from_utf16_lossy(&buffer[..len])
+}
+
 #[cfg(test)]
 mod tests {
-    use super::InboundSerialization;
+    use super::{InboundSerialization, RemoteLogonCredential, wide_buffer_to_string};
     use windows::Win32::System::Com::CoTaskMemFree;
     use windows::Win32::UI::Shell::CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION;
     use windows::core::GUID;
@@ -172,5 +375,32 @@ mod tests {
             assert_eq!(bytes, &[8_u8, 6, 7]);
             CoTaskMemFree(Some(output.rgbSerialization.cast_const().cast()));
         }
+    }
+
+    #[test]
+    fn builds_domain_qualified_username_for_repack() {
+        let credential = RemoteLogonCredential {
+            username: "alice".to_owned(),
+            domain: "ACME".to_owned(),
+            password: "secret".to_owned(),
+        };
+
+        assert_eq!(credential.packed_username(), "ACME\\alice");
+    }
+
+    #[test]
+    fn keeps_upn_username_for_repack() {
+        let credential = RemoteLogonCredential {
+            username: "alice@example.com".to_owned(),
+            domain: "ACME".to_owned(),
+            password: "secret".to_owned(),
+        };
+
+        assert_eq!(credential.packed_username(), "alice@example.com");
+    }
+
+    #[test]
+    fn converts_wide_buffer_until_first_nul() {
+        assert_eq!(wide_buffer_to_string(&[65, 66, 0, 67]), "AB");
     }
 }

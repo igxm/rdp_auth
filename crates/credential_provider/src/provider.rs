@@ -110,14 +110,40 @@ impl ICredentialProvider_Impl for RdpMfaProvider_Impl {
             Some(copied)
         };
 
+        let remote_logon_credential = copied
+            .as_ref()
+            .and_then(|inbound| match inbound.unpack_remote_logon_credential() {
+                Ok(credential) => {
+                    log_event(
+                        "SetSerialization",
+                        format!(
+                            "unpacked_remote_credential username_chars={} domain_chars={} password_chars={}",
+                            credential.username_len(),
+                            credential.domain_len(),
+                            credential.password_len()
+                        ),
+                    );
+                    Some(credential)
+                }
+                Err(error) => {
+                    log_event(
+                        "SetSerialization",
+                        format!("unpack_remote_credential_failed error={error}"),
+                    );
+                    None
+                }
+            });
+
         let mut state = self.state.lock().expect("provider state poisoned");
         state.has_inbound_serialization = copied.is_some();
         state.inbound_serialization = copied;
+        state.remote_logon_credential = remote_logon_credential;
         log_event(
             "SetSerialization",
             format!(
-                "state_updated has_inbound_serialization={}",
-                state.has_inbound_serialization
+                "state_updated has_inbound_serialization={} has_remote_logon_credential={}",
+                state.has_inbound_serialization,
+                state.remote_logon_credential.is_some()
             ),
         );
         Ok(())

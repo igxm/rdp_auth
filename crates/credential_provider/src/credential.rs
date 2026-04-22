@@ -23,7 +23,7 @@ use windows::core::{BOOL, Error, IUnknownImpl, PCWSTR, PWSTR, Ref, Result, imple
 use crate::diagnostics::log_event;
 use crate::fields::MfaField;
 use crate::memory::alloc_wide_string;
-use crate::state::CredentialProviderState;
+use crate::state::{CredentialProviderState, RDP_MFA_PROVIDER_CLSID};
 
 const AUTH_METHOD_LABELS: [&str; 3] = ["手机验证码", "二次密码", "微信扫码（预留）"];
 const MOCK_SMS_CODE: &str = "123456";
@@ -370,7 +370,7 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
 
         let can_return =
             state.mfa_state.allows_serialization() || state.allow_passthrough_without_mfa;
-        let Some(inbound) = state.inbound_serialization.as_ref().cloned() else {
+        let Some(remote_logon_credential) = state.remote_logon_credential.as_ref().cloned() else {
             log_event("GetSerialization", "missing_inbound_serialization");
             unsafe {
                 // SAFETY: `response` 已做非空检查；没有原始凭证时必须拒绝交出凭证。
@@ -398,16 +398,35 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
         // 正确边界是把序列化凭证交给 LogonUI/Winlogon，由系统继续交给 LSA；这样才能
         // 保持 Windows 登录审计、策略和错误处理都走系统原生链路。
         drop(state);
+        let packed = match remote_logon_credential.pack_for_logon(RDP_MFA_PROVIDER_CLSID) {
+            Ok(packed) => packed,
+            Err(error) => {
+                log_event(
+                    "GetSerialization",
+                    format!("pack_remote_credential_failed error={error}"),
+                );
+                unsafe {
+                    *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
+                    if !status_icon.is_null() {
+                        *status_icon = CPSI_ERROR;
+                    }
+                    if !status_text.is_null() {
+                        *status_text = alloc_wide_string("RDP 原始凭证重新打包失败，无法继续登录")?;
+                    }
+                }
+                return Ok(());
+            }
+        };
         log_event(
             "GetSerialization",
             format!(
-                "returning_inbound auth_package={} source_provider={:?} bytes_len={}",
-                inbound.authentication_package,
-                inbound.source_provider,
-                inbound.bytes.len()
+                "returning_packed_logon auth_package={} source_provider={:?} bytes_len={}",
+                packed.authentication_package,
+                packed.source_provider,
+                packed.bytes.len()
             ),
         );
-        inbound.write_to(serialization)?;
+        packed.write_to(serialization)?;
         unsafe {
             // SAFETY: `response` 已做非空检查；`serialization` 已由 `write_to` 填充。
             *response = CPGSR_RETURN_CREDENTIAL_FINISHED;

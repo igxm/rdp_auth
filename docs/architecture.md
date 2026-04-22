@@ -2,14 +2,14 @@
 
 ## 目标边界
 
-本项目的 Credential Provider 只负责 RDP 登录后的二次认证，不替代 Windows 一次凭证输入。RDP 客户端或 NLA 阶段已经收集基础 Windows 凭证，目标机 LogonUI 会在合适场景下通过 `SetSerialization` 把原始凭证序列化数据传给 Credential Provider。
+本项目的 Credential Provider 只负责 RDP 登录后的二次认证，不替代 Windows 一次凭证输入。RDP 客户端或 NLA 阶段已经收集基础 Windows 凭证，目标机 LogonUI 会在合适场景下通过 `SetSerialization` 把远程 authentication buffer 传给 Credential Provider。
 
 Credential Provider 的核心职责是：
 
-1. 缓存 `SetSerialization` 传入的原始凭证。
+1. 接收 `SetSerialization` 传入的远程 authentication buffer，并解包出 Windows 一次凭证。
 2. 展示短信验证码、二次密码和后续微信扫码认证界面。
 3. 调用本地 helper 完成二次认证。
-4. 认证成功后，在 `GetSerialization` 中把原始凭证交回 LogonUI。
+4. 认证成功后，在 `GetSerialization` 中重新打包成 LogonUI/LSA 可消费的 Negotiate 凭证。
 5. 认证失败或未收到原始凭证时，拒绝交出凭证。
 
 ## 进程划分
@@ -65,11 +65,11 @@ Credential Provider Tile 已经预留以下二次认证字段：
 2. 二次密码认证：二次密码为 `mock-password` 时通过。
 3. 微信扫码认证：仍保持未接入状态，不允许放行。
 
-mock 认证通过后，`GetSerialization` 才返回缓存的 RDP 原始凭证；mock 认证失败时返回 `CPGSR_NO_CREDENTIAL_NOT_FINISHED`，LogonUI 会停留在当前 Tile。点击取消会调用 Remote Desktop Services API 断开当前会话，用于结束本次 RDP 登录尝试。
+mock 认证通过后，`GetSerialization` 才返回重新打包后的 Windows 登录凭证；mock 认证失败时返回 `CPGSR_NO_CREDENTIAL_NOT_FINISHED`，LogonUI 会停留在当前 Tile。点击取消会调用 Remote Desktop Services API 断开当前会话，用于结束本次 RDP 登录尝试。
 
-放行时必须恢复 RDP 远程凭证原始 Provider CLSID。Filter 会临时把 Provider CLSID 改成本项目 CLSID，让 LogonUI 把 serialization 交给二次认证 Tile；但 `GetSerialization` 返回给系统继续登录时，应恢复原始 Provider CLSID 和原始字节，否则可能出现 mock 认证通过后仍提示用户名或密码错误。实机 RDP 链路里 `UpdateRemoteCredential()` 与 Provider `SetSerialization()` 可能不在同一进程内，因此原始 Provider CLSID 同时通过进程内缓存和 `C:\ProgramData\rdp_auth` 下按 session 区分的临时 handoff 文件传递；handoff 文件只保存 Provider GUID，不保存用户名、密码或 serialization 字节，并在读取后删除。
+Filter 会临时把 Provider CLSID 改成本项目 CLSID，让 LogonUI 把远程 authentication buffer 交给二次认证 Tile。实机 RDP 链路里 `UpdateRemoteCredential()` 与 Provider `SetSerialization()` 可能不在同一进程内，因此原始 Provider CLSID 同时通过进程内缓存和 `C:\ProgramData\rdp_auth` 下按 session 区分的临时 handoff 文件传递；handoff 文件只保存 Provider GUID，不保存用户名、密码或 serialization 字节，并在读取后删除。当前放行不再原样返回 inbound buffer，因为日志显示 inbound `auth_package=0` 会导致 LSA 返回 `STATUS_LOGON_FAILURE`；Provider 会使用 `CredUnPackAuthenticationBufferW` 解包远程凭证，再用 `CredPackAuthenticationBufferW` 和 `LsaLookupAuthenticationPackage("Negotiate")` 重新生成可登录的凭证 serialization。
 
-排查 mock MFA 通过后仍无法进入桌面时，优先查看 `credential_provider.log` 中是否出现完整链路：`UpdateRemoteCredential route_to_mfa`、`RemoteProviderHandoff write_ok`、`SetSerialization restored_source_provider`、`GetSerialization returning_inbound`。如果这些都正常但随后 `ReportResult` 返回 `0xC000006D` 等登录失败状态，说明 Windows 已收到凭证但 LSA 拒绝，需要继续检查返回的认证包、Provider CLSID 或 RDP/NLA 凭证模型。
+排查 mock MFA 通过后仍无法进入桌面时，优先查看 `credential_provider.log` 中是否出现完整链路：`UpdateRemoteCredential route_to_mfa`、`RemoteProviderHandoff write_ok`、`SetSerialization unpacked_remote_credential`、`GetSerialization returning_packed_logon`。如果这些都正常但随后 `ReportResult` 返回 `0xC000006D` 等登录失败状态，说明 Windows 已收到重新打包的凭证但 LSA 拒绝，需要继续检查域名/用户名组合、认证包或 RDP/NLA 凭证模型。
 
 ## RDP 注销与无原始凭证策略
 

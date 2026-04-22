@@ -6,7 +6,7 @@
 - 所有新增代码必须包含必要的中文注释，重点解释 Windows COM、Credential Provider 生命周期、凭证序列化、IPC、安全边界等后期维护难点。
 - 中文注释应解释“为什么这样做”和“此处有什么坑”，避免只重复代码表面含义。
 - 代码必须按功能或逻辑分层，不允许把 COM 导出、类工厂、Provider、Credential、字段定义、凭证序列化、IPC、配置读取、API 调用等长期堆在同一个文件。
-- Credential Provider DLL 只做 RDP 凭证接收、二次认证 UI、调用本地 helper、认证通过后转交原始凭证。
+- Credential Provider DLL 只做 RDP 凭证接收、二次认证 UI、调用本地 helper、认证通过后转交可由 LogonUI/LSA 消费的凭证序列化数据。
 - 网络请求、注册表读取、业务审计日志、策略判断都放到本地 helper，避免 LogonUI 进程被阻塞或拖垮；Credential Provider DLL 只允许写入轻量脱敏诊断日志，且日志失败不能影响登录流程。
 - 第一阶段不隐藏系统默认 Credential Provider，确认 RDP pass-through 链路稳定后再实现过滤器，降低锁死测试机风险。
 
@@ -19,7 +19,7 @@
 3. Credential Provider 通过 `SetSerialization` 接收 RDP 传入的原始凭证序列化数据。
 4. Credential Provider 展示二次认证界面。
 5. 用户完成短信验证码、二次密码或后续微信扫码认证。
-6. 二次认证通过后，`GetSerialization` 将原始凭证交回 LogonUI。
+6. 二次认证通过后，`GetSerialization` 将 RDP 凭证重新打包成 LogonUI/LSA 可消费的 Negotiate 凭证。
 7. Winlogon / LSA 继续完成真正的 Windows 登录。
 
 ## 阶段 0：仓库基线与工程规范
@@ -55,16 +55,18 @@
 - [x] 在代码中用中文注释解释 COM 引用计数、接口查询、对象生命周期。
 - [x] 按职责拆分阶段 2 代码，避免 DLL 入口、类工厂、Provider、Credential、字段和内存分配长期堆在同一个文件。
 
-## 阶段 3：RDP 原始凭证接收与原样转交
+## 阶段 3：RDP 原始凭证接收与重新打包转交
 
 - [x] 实现 `ICredentialProvider::SetSerialization`。
 - [x] 深拷贝保存 `CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION`。
 - [x] 保存字段包括 `ulAuthenticationPackage`、`clsidCredentialProvider`、`cbSerialization`、`rgbSerialization`。
 - [x] 实现 `ICredentialProviderCredential::GetSerialization`。
-- [x] 在未启用二次认证时，将缓存的原始凭证原样返回给 LogonUI。
+- [x] 在早期 pass-through 阶段曾验证原始凭证原样返回链路；当前已改为解包后重新打包。
 - [x] 如果没有收到 inbound serialization，显示明确错误并拒绝提交。
 - [x] 使用 RDP 测试：mstsc 输入凭证后，目标机 CP 能收到 serialization 并成功继续登录。
 - [x] 用中文注释说明为什么不能自己调用 `LsaLogonUser`，以及为什么交给 Winlogon 处理。
+- [x] 使用 `CredUnPackAuthenticationBufferW` 从 RDP/NLA inbound authentication buffer 中解出 Windows 一次凭证，只在内存中短暂保存，不写日志。
+- [x] MFA 通过后使用 `CredPackAuthenticationBufferW` 重新打包凭证，并通过 `LsaLookupAuthenticationPackage("Negotiate")` 填入正确 authentication package，避免继续返回 `auth_package=0` 的 inbound buffer。
 
 ## 阶段 4：二次认证 UI 状态机
 
@@ -86,8 +88,8 @@
 - [x] 设计 `MfaState` 状态机：空闲、发送短信中、等待输入、认证中、成功、失败。
 - [x] 使用 mock 数据模拟认证通过情况：手机验证码 `123456`、二次密码 `mock-password`。
 - [x] 二次认证未通过时，`GetSerialization` 不返回原始凭证。
-- [x] 二次认证通过后，`GetSerialization` 返回缓存的原始凭证。
-- [x] 修复 mock MFA 通过后仍提示用户名或密码错误：Filter 记录 RDP 原始 Provider CLSID 时同时写入按 session 区分的 handoff 文件，Provider 在 `SetSerialization` 阶段跨进程恢复原始 Provider CLSID 后再放行。
+- [x] 二次认证通过后，`GetSerialization` 不再返回缓存的 inbound 原始 bytes，而是返回重新打包后的 Negotiate 凭证。
+- [x] 修复 mock MFA 通过后仍提示用户名或密码错误：Filter 记录 RDP 原始 Provider CLSID 时同时写入按 session 区分的 handoff 文件，Provider 在 `SetSerialization` 阶段跨进程恢复原始 Provider CLSID；随后解包 RDP inbound buffer 并重新打包为 Negotiate 凭证后放行。
 - [x] 增加 Credential Provider 脱敏诊断日志：记录 Filter、SetSerialization、mock 验证、GetSerialization、ReportResult 的链路阶段，便于定位 mock MFA 通过后仍无法进入桌面的问题。
 - [x] 点击取消按钮时，调用 Remote Desktop Services API 断开当前 RDP 会话。
 - [ ] 增加 RDP 注销/返回登录界面保护：如果 RDP 场景下没有收到 inbound credential serialization，不允许只显示 MFA 入口，默认断开当前 RDP 连接，迫使用户重新发起 RDP/NLA 并重新提供原始凭证。
@@ -191,6 +193,7 @@
 - [ ] 集成测试：认证超时后自动断开当前 RDP 会话。
 - [x] 单元测试：RDP 原始 Provider CLSID 可通过跨进程 handoff 文件恢复。
 - [x] 单元测试：Credential Provider 诊断日志会清理换行符，避免单条日志被拆行。
+- [x] 单元测试：RDP 凭证重新打包时正确拼接域用户、保留 UPN 用户名。
 - [ ] 单元测试：IPC 请求响应序列化。
 - [ ] 单元测试：注册表配置解析。
 - [ ] 单元测试：API 错误映射。

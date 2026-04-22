@@ -109,8 +109,8 @@ Get-Content C:\ProgramData\rdp_auth\logs\credential_provider.log -Tail 80
 
 - `UpdateRemoteCredential route_to_mfa`
 - `RemoteProviderHandoff write_ok`
-- `SetSerialization restored_source_provider`
-- `GetSerialization returning_inbound`
+- `SetSerialization unpacked_remote_credential`
+- `GetSerialization returning_packed_logon`
 - `ReportResult status=... sub_status=...`
 
 ## 6. 登录验证
