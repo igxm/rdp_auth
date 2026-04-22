@@ -12,8 +12,9 @@ mod protected_file;
 mod schema;
 
 pub use file_config::{
-    ConfigSnapshot, default_config_path, ensure_default_app_config_file, load_app_config,
-    load_app_config_snapshot, load_config_path,
+    ConfigSnapshot, default_config_path, ensure_default_app_config_file, export_app_config_toml,
+    export_app_config_toml_to_path, import_app_config_toml, import_app_config_toml_from_path,
+    load_app_config, load_app_config_snapshot, load_config_path,
 };
 pub use legacy::{LocalConfig, load_local_config};
 pub use login_policy::{

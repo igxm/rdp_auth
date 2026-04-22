@@ -12,6 +12,7 @@ mod registry;
 
 use std::io::Write;
 
+use auth_config::{export_app_config_toml_to_path, import_app_config_toml_from_path};
 use cli::{Command, parse_args};
 use registry::{
     ProviderRegistration, disable_provider, enable_provider, health_check, query_app_config,
@@ -62,6 +63,22 @@ fn run() -> Result<(), String> {
             enable_provider()?;
             print_line("已重新启用 Provider 枚举入口");
         }
+        Command::ConfigExport { output_path } => {
+            export_app_config_toml_to_path(&output_path)?;
+            print_line(&format!("已导出明文 TOML 配置: {}", output_path.display()));
+            print_line(
+                "提示: 该文件包含管理员可编辑的明文配置，只用于短期维护；完成导入后请删除或妥善保护。",
+            );
+        }
+        Command::ConfigImport { input_path } => {
+            let snapshot = import_app_config_toml_from_path(&input_path)?;
+            print_line(&format!(
+                "已导入并重新加密配置: {}",
+                snapshot.path.display()
+            ));
+            print_line("提示: 运行期只读取加密 .enc 配置；请删除或妥善保护导入用的明文 TOML。");
+            print_line(&format!("业务配置:\n{}", snapshot));
+        }
         Command::Help => {
             print_help();
         }
@@ -79,6 +96,8 @@ register_tool status
 register_tool health
 register_tool disable
 register_tool enable
+register_tool config export --out <rdp_auth.toml>
+register_tool config import --in <rdp_auth.toml>
 
 说明:
   install   写入 Credential Provider COM 和 LogonUI 注册表项，需要管理员权限。
@@ -87,6 +106,8 @@ register_tool enable
   health    检查注册表、DLL 路径和 ProgramData 目录。
   disable   应急删除 LogonUI 枚举入口，保留 COM 注册信息。
   enable    重新创建 LogonUI 枚举入口。
+  config export  导出明文 TOML，供管理员短期编辑；不要长期保存。
+  config import  导入明文 TOML，校验后立即加密写回运行期配置。
 ",
     );
 }

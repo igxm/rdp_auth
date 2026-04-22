@@ -23,6 +23,10 @@ pub enum Command {
     Disable,
     /// 重新启用 LogonUI 枚举入口。
     Enable,
+    /// 导出当前加密配置为管理员可编辑的明文 TOML。
+    ConfigExport { output_path: PathBuf },
+    /// 导入管理员编辑后的明文 TOML，并立即加密写回运行期配置。
+    ConfigImport { input_path: PathBuf },
     /// 打印帮助。
     Help,
 }
@@ -44,9 +48,47 @@ where
         "health" => Ok(Command::Health),
         "disable" => Ok(Command::Disable),
         "enable" => Ok(Command::Enable),
+        "config" => parse_config(&args[1..]),
         "-h" | "--help" | "help" => Ok(Command::Help),
         other => Err(format!("未知命令 `{other}`，请使用 --help 查看用法")),
     }
+}
+
+fn parse_config(args: &[OsString]) -> Result<Command, String> {
+    let Some(subcommand) = args.first().and_then(|value| value.to_str()) else {
+        return Err("config 需要子命令: export 或 import".to_owned());
+    };
+
+    match subcommand {
+        "export" => parse_config_path_arg(&args[1..], "--out")
+            .map(|output_path| Command::ConfigExport { output_path }),
+        "import" => parse_config_path_arg(&args[1..], "--in")
+            .map(|input_path| Command::ConfigImport { input_path }),
+        other => Err(format!(
+            "config 不支持子命令 `{other}`，请使用 export 或 import"
+        )),
+    }
+}
+
+fn parse_config_path_arg(args: &[OsString], flag_name: &str) -> Result<PathBuf, String> {
+    let mut path = None;
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].to_str() {
+            Some(flag) if flag == flag_name => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(format!("config {flag_name} 缺少路径"));
+                };
+                path = Some(PathBuf::from(value));
+                index += 2;
+            }
+            Some(flag) => return Err(format!("config 不支持参数 `{flag}`")),
+            None => return Err("参数包含非 Unicode 内容，无法安全读取配置路径".to_owned()),
+        }
+    }
+
+    path.ok_or_else(|| format!("config 需要显式传入 {flag_name} <path>"))
 }
 
 fn parse_install(args: &[OsString]) -> Result<Command, String> {
@@ -92,5 +134,37 @@ mod tests {
     fn rejects_install_without_dll() {
         let error = parse_args([OsString::from("install")]).unwrap_err();
         assert!(error.contains("--dll"));
+    }
+
+    #[test]
+    fn parses_config_export() {
+        assert_eq!(
+            parse_args([
+                OsString::from("config"),
+                OsString::from("export"),
+                OsString::from("--out"),
+                OsString::from("C:\\temp\\rdp_auth.toml"),
+            ])
+            .unwrap(),
+            Command::ConfigExport {
+                output_path: "C:\\temp\\rdp_auth.toml".into()
+            }
+        );
+    }
+
+    #[test]
+    fn parses_config_import() {
+        assert_eq!(
+            parse_args([
+                OsString::from("config"),
+                OsString::from("import"),
+                OsString::from("--in"),
+                OsString::from("C:\\temp\\rdp_auth.toml"),
+            ])
+            .unwrap(),
+            Command::ConfigImport {
+                input_path: "C:\\temp\\rdp_auth.toml".into()
+            }
+        );
     }
 }

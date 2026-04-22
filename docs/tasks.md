@@ -253,9 +253,9 @@
 - [ ] helper 支持兼容读取旧版 `reginfo.ini`，只作为迁移来源或显式 fallback；成功迁移后写入统一加密配置文件，CP 不直接读取 `reginfo.ini`。
 - [x] `auth_config` 增加配置解密层：先读取 AES 加密文件并解密为内存中的 TOML/JSON，再解析为结构化配置；明文只允许短暂存在于内存。
 - [x] `auth_config` 对机器码缺失、密文损坏、AES 解密失败分别返回结构化错误，并按 fail closed/安全默认值策略处理。
-- [ ] `register_tool config export` 导出明文 TOML 供管理员编辑，命令输出必须提示明文敏感和删除临时文件；导出操作需要管理员显式执行。
-- [ ] `register_tool config import` 读取明文 TOML 后立即加密写回 `.enc` 文件，已有加密配置写入前创建加密备份，不保留明文副本。
-- [ ] `register_tool health` 显示配置文件是否加密、AES 算法、密文长度、解密是否成功、配置来源和最后修改时间；不得显示配置明文内容。（当前已显示加密状态、算法和密文长度；最后修改时间待补）
+- [x] `register_tool config export` 导出明文 TOML 供管理员编辑，命令输出必须提示明文敏感和删除临时文件；导出操作需要管理员显式执行。
+- [x] `register_tool config import` 读取明文 TOML 后立即加密写回 `.enc` 文件，已有加密配置写入前创建加密备份，不保留明文副本。
+- [x] `register_tool health` 显示配置文件是否加密、AES 算法、密文长度、解密是否成功、配置来源和最后修改时间；不得显示配置明文内容。
 - [ ] 配置缺失时返回结构化错误。
 - [ ] 认证方式配置缺失或非法时使用安全默认值；全部关闭时恢复默认认证方式集合。
 - [ ] helper 启动时输出脱敏诊断日志。
@@ -361,7 +361,7 @@
 - [x] 单元测试：AES 加密后不包含 TOML/JSON 明文字段，例如 `serveraddr`、`hostuuid`、手机号或 API 地址。
 - [x] 单元测试：AES 解密成功后能恢复原始 TOML/JSON 并解析为结构化配置。
 - [x] 单元测试：错误密文、截断文件和错误机器码时返回结构化错误且不泄漏明文。
-- [ ] 单元测试：`register_tool config import/export` 能完成明文 TOML 与加密配置的转换，导入不会覆盖失败前的有效加密配置。
+- [x] 单元测试：`register_tool config import/export` 覆盖 CLI 解析、明文 TOML 归一化、非法 TOML 拒绝和加密配置备份命名；真实导入/导出仍需在安装环境做集成验证。
 - [ ] 单元测试：缺失 serialization 保护 generation 变化后旧定时器不会断开新登录尝试。
 - [ ] 单元测试：短信倒计时 generation 变化后旧刷新线程不会覆盖新倒计时。
 - [ ] 单元测试：helper `SessionAuthState` 标记、查询、TTL 过期和清理逻辑。
@@ -395,6 +395,7 @@
 - [ ] 集成测试：`send_sms` 请求会携带 host_public_ip，并在公网 IP 获取失败时按策略降级。
 - [ ] 集成测试：远程配置拉取、缓存、周期刷新和失败回退。
 - [ ] 集成测试：远程配置缓存以 `.enc` 加密文件落盘，helper 重启后可解密加载最后一次有效配置。
+- [ ] 集成测试：`register_tool config export/import` 在真实机器码和注册表配置路径下完成明文 TOML 导出、重新导入、旧 `.enc` 备份和 health 复查。
 - [ ] 集成测试：CP 调 helper 超时。
 - [ ] 集成测试：Tauri 管理 GUI 未安装、WebView2 缺失或 GUI 启动失败时，核心 helper 仍可启动，CP 仍按 helper/IPC/fail closed 策略工作。
 - [ ] 集成测试：Tauri 管理 GUI 保存配置会走 `register_tool config import` 或等效管理 IPC，加密配置写入失败时不得破坏上一份有效 `.enc` 文件。
@@ -426,8 +427,8 @@
 - [ ] 远程配置下发不得绕过 MFA、不得关闭所有认证方式、不得禁用 fail closed 安全默认值。
 - [ ] 所有业务配置文件必须加密落盘；包括本地统一配置、远程配置缓存、手机号文件、旧版配置迁移结果和后续新增配置文件。
 - [ ] 配置加密使用注册表机器码派生 AES key；机器码不得写入日志、配置文件或 IPC 响应。
-- [ ] 配置导入/导出的明文文件只用于管理员维护，不作为运行期配置来源；工具必须提示明文风险，导入成功后运行期只读取加密文件。
-- [ ] `health` 和诊断日志只允许记录配置文件路径、加密状态、版本、修改时间和错误码，不得记录解密后的配置内容。
+- [x] 配置导入/导出的明文文件只用于管理员维护，不作为运行期配置来源；工具必须提示明文风险，导入成功后运行期只读取加密文件。
+- [x] `health` 和诊断日志只允许记录配置文件路径、加密状态、版本、修改时间和错误码，不得记录解密后的配置内容。
 - [x] Credential Provider 诊断日志只记录阶段、PID、session、Provider GUID、serialization 长度和错误码，写入失败不影响 LogonUI。
 - [ ] 所有 `tracing` 字段必须先经过脱敏策略评审，禁止直接使用 `?struct` 或 `%struct` 记录包含敏感字段的结构体。
 - [ ] 所有 `anyhow::Context` 文案不得拼接敏感值；需要排查时使用脱敏 ID、长度、哈希前缀或内部错误码。
