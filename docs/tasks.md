@@ -217,6 +217,8 @@
 - [ ] Windows Server 2008 R2 兼容验证必须覆盖 DPAPI 机器级加密/解密；如果需要降级为本机密钥文件，必须先设计 ACL、轮换、备份和审计策略。
 - [ ] 注册表只保留 Windows 集成所必需的机器级信息：Provider/Filter COM 注册、LogonUI 枚举入口、DLL 路径、helper 路径、配置文件路径、`DisableMfa` 应急开关和必要的 `EnableRdpMfa` / `EnableConsoleMfa` 登录入口策略；认证方式、API、手机号、超时、审计、远程配置等业务配置不得散落写入注册表。
 - [ ] `auth_config` 读取注册表 `SOFTWARE\rdp_auth\config` 中的最小引导项，例如 `ConfigPath`、`HelperPath`、`DisableMfa`、`EnableRdpMfa`、`EnableConsoleMfa`，再读取统一配置文件。
+- [x] `auth_config` 按职责拆分模块：`login_policy` 只处理注册表最小引导项，`file_config` 只处理配置路径/文件读写/TOML 解析，`schema` 只处理配置结构和默认值归一化，`legacy` 只保留旧配置迁移占位。
+- [x] `auth_config::lib` 仅作为对外 API re-export 层，避免注册表读取、配置 schema、文件 IO、旧版迁移和后续加密 envelope 继续堆在单个文件。
 - [x] `register_tool install` 初始化统一配置文件，若文件已存在则不覆盖人工修改；注册表只写最小引导项和 Windows 必需注册项。
 - [ ] 定义统一配置 schema，至少包含 `[auth_methods]`、`[mfa]`、`[phone]`、`[api]`、`[audit]`、`[remote_config]`、`[logging]` 七组配置，并提供版本字段 `schema_version`。
 - [ ] 定义认证方式开关配置，例如 `auth_methods.phone_code`、`auth_methods.second_password`、`auth_methods.wechat`，默认启用手机验证码和二次密码，微信在真实接入前默认关闭。
