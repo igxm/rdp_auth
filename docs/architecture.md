@@ -67,6 +67,12 @@ mock 认证通过后，`GetSerialization` 才返回缓存的 RDP 原始凭证；
 
 放行时必须恢复 RDP 远程凭证原始 Provider CLSID。Filter 会临时把 Provider CLSID 改成本项目 CLSID，让 LogonUI 把 serialization 交给二次认证 Tile；但 `GetSerialization` 返回给系统继续登录时，应恢复原始 Provider CLSID 和原始字节，否则可能出现 mock 认证通过后仍提示用户名或密码错误。
 
+## RDP 注销与无原始凭证策略
+
+当前架构依赖 RDP/NLA 阶段传入的原始凭证序列化数据，本项目不替代 Windows 一次凭证输入，也不保存可重新构造登录的明文用户名密码。用户已经进入桌面后如果执行注销，远程连接可能回到 LogonUI，但此时不一定会再次触发 `UpdateRemoteCredential()` 并提供新的 inbound serialization。
+
+因此在 RDP 场景下，如果没有收到 inbound credential serialization，不允许只显示孤立的 MFA 入口。默认处理策略是断开当前 RDP 连接，让用户重新发起 RDP/NLA 登录；新的连接会重新提供原始 Windows 凭证，然后再进入二次认证流程。只有后续实现完整的一次凭证采集与打包能力时，才应考虑注销后不断开并在同一界面重新登录。
+
 ## 认证超时策略
 
 二次认证界面应有超时断开机制：用户进入 Tile 后，如果默认 2 分钟内没有完成认证，应自动断开当前 RDP 会话，避免远程登录界面长时间停留。后续超时时间通过配置文件读取，例如 `MfaTimeoutSeconds`，缺失或非法时恢复默认 120 秒。

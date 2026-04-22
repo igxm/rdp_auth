@@ -88,6 +88,7 @@
 - [x] 二次认证未通过时，`GetSerialization` 不返回原始凭证。
 - [x] 二次认证通过后，`GetSerialization` 返回缓存的原始凭证。
 - [x] 点击取消按钮时，调用 Remote Desktop Services API 断开当前 RDP 会话。
+- [ ] 增加 RDP 注销/返回登录界面保护：如果 RDP 场景下没有收到 inbound credential serialization，不允许只显示 MFA 入口，默认断开当前 RDP 连接，迫使用户重新发起 RDP/NLA 并重新提供原始凭证。
 - [x] 中文注释解释 LogonUI UI 更新机制和状态切换原因。
 
 ## 阶段 5：本地 helper 与 IPC
@@ -194,6 +195,7 @@
 - [x] VM 测试：RDP + NLA + 正确凭证 + MFA 成功。（当前为 pass-through 验证，真实 MFA 接入后需复测）
 - [ ] VM 测试：RDP + NLA + 正确凭证 + MFA 失败。
 - [ ] VM 测试：RDP 未传入 serialization 的降级提示。
+- [ ] VM 测试：RDP 用户注销后返回登录界面时，若没有新的 inbound serialization，应断开 RDP 连接而不是停留在孤立 MFA 入口。
 - [ ] VM 测试：服务端不可达时默认拒绝登录。
 - [x] VM 测试：系统默认 Provider 未隐藏时可恢复登录。
 - [x] VM 测试：Filter 启用后无法绕过 MFA。（当前验证为无法绕过 Provider，真实 MFA 接入后需复测）
