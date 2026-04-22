@@ -13,7 +13,9 @@ use auth_config::{
 use winreg::RegKey;
 use winreg::enums::HKEY_LOCAL_MACHINE;
 
-use crate::dirs::{ensure_runtime_dirs, runtime_dirs_status};
+use crate::dirs::{
+    LogDirectoryStatus, ensure_runtime_dirs, log_directory_status, runtime_dirs_status,
+};
 use crate::guid::{filter_clsid_string, provider_clsid_string};
 
 const PROVIDER_NAME: &str = "RDP Auth MFA Provider";
@@ -83,6 +85,7 @@ pub struct HealthReport {
     pub login_policy: LoginPolicy,
     pub app_config: ConfigSnapshot,
     pub runtime_dirs: String,
+    pub log_status: LogDirectoryStatus,
 }
 
 impl fmt::Display for HealthReport {
@@ -113,7 +116,8 @@ impl fmt::Display for HealthReport {
         )?;
         writeln!(formatter, "登录策略:\n{}", self.login_policy)?;
         writeln!(formatter, "业务配置:\n{}", self.app_config)?;
-        write!(formatter, "{}", self.runtime_dirs)
+        writeln!(formatter, "{}", self.runtime_dirs)?;
+        write!(formatter, "{}", self.log_status)
     }
 }
 
@@ -309,6 +313,7 @@ pub fn health_check() -> Result<HealthReport, String> {
         login_policy: query_login_policy(),
         app_config: load_app_config_snapshot(),
         runtime_dirs: runtime_dirs_status(),
+        log_status: log_directory_status(),
     })
 }
 
