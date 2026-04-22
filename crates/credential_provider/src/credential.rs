@@ -397,8 +397,11 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
         // Credential Provider 在 CPUS_LOGON/UNLOCK 场景下不直接调用 LsaLogonUser。
         // 正确边界是把序列化凭证交给 LogonUI/Winlogon，由系统继续交给 LSA；这样才能
         // 保持 Windows 登录审计、策略和错误处理都走系统原生链路。
+        let usage_scenario = state.usage_scenario;
         drop(state);
-        let packed = match remote_logon_credential.pack_for_logon(RDP_MFA_PROVIDER_CLSID) {
+        let packed = match remote_logon_credential
+            .pack_for_logon(RDP_MFA_PROVIDER_CLSID, usage_scenario)
+        {
             Ok(packed) => packed,
             Err(error) => {
                 log_event(

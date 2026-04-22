@@ -4,19 +4,56 @@
 //! 原始指针。这里将其深拷贝到 `Vec<u8>`，等 `GetSerialization` 放行时再用 COM 分配器
 //! 创建新的输出缓冲区交还给 LogonUI。
 
-use windows::Win32::Foundation::{E_FAIL, E_OUTOFMEMORY, E_POINTER, HANDLE, NTSTATUS};
+use windows::Win32::Foundation::{
+    E_FAIL, E_INVALIDARG, E_OUTOFMEMORY, E_POINTER, HANDLE, NTSTATUS,
+};
 use windows::Win32::Security::Authentication::Identity::{
     LSA_STRING, LsaConnectUntrusted, LsaDeregisterLogonProcess, LsaLookupAuthenticationPackage,
     LsaNtStatusToWinError,
 };
-use windows::Win32::Security::Credentials::{
-    CRED_PACK_FLAGS, CredPackAuthenticationBufferW, CredUnPackAuthenticationBufferW,
-};
+use windows::Win32::Security::Credentials::{CRED_PACK_FLAGS, CredUnPackAuthenticationBufferW};
 use windows::Win32::System::Com::CoTaskMemAlloc;
-use windows::Win32::UI::Shell::CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION;
-use windows::core::{Error, GUID, HRESULT, PCWSTR, PSTR, PWSTR, Result};
+use windows::Win32::UI::Shell::{
+    CPUS_LOGON, CPUS_UNLOCK_WORKSTATION, CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION,
+    CREDENTIAL_PROVIDER_USAGE_SCENARIO,
+};
+use windows::core::{Error, GUID, HRESULT, PSTR, PWSTR, Result};
 
 use crate::diagnostics::log_event;
+
+const KERB_INTERACTIVE_LOGON: u32 = 2;
+const KERB_WORKSTATION_UNLOCK_LOGON: u32 = 7;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct PackedUnicodeString {
+    length: u16,
+    maximum_length: u16,
+    buffer: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct KerbInteractiveLogon {
+    message_type: u32,
+    logon_domain_name: PackedUnicodeString,
+    user_name: PackedUnicodeString,
+    password: PackedUnicodeString,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Luid {
+    low_part: u32,
+    high_part: i32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct KerbInteractiveUnlockLogon {
+    logon: KerbInteractiveLogon,
+    logon_id: Luid,
+}
 
 /// 已深拷贝的 RDP 原始凭证序列化数据。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,89 +106,130 @@ impl RemoteLogonCredential {
         self.password.chars().count()
     }
 
-    fn packed_username(&self) -> String {
-        if self.domain.trim().is_empty()
-            || self.username.contains('\\')
-            || self.username.contains('@')
-        {
-            self.username.clone()
+    fn logon_name_parts(&self) -> (String, String) {
+        if !self.domain.trim().is_empty() {
+            return (self.domain.clone(), self.username.clone());
+        }
+
+        if let Some((domain, username)) = self.username.split_once('\\') {
+            (domain.to_owned(), username.to_owned())
         } else {
-            format!("{}\\{}", self.domain, self.username)
+            (String::new(), self.username.clone())
         }
     }
 
     /// MFA 通过后，重新打包为 LogonUI/LSA 能消费的 Negotiate 凭证。
     ///
     /// `UpdateRemoteCredential` 传入的 authentication buffer 只是远程登录阶段给系统 Provider
-    /// 使用的材料，直接原样返回会得到 `STATUS_LOGON_FAILURE`。这里改为使用解包出的 Windows
-    /// 一次凭证重新调用 `CredPackAuthenticationBufferW`，并填入 `Negotiate` authentication package。
-    pub fn pack_for_logon(&self, provider_clsid: GUID) -> Result<InboundSerialization> {
+    /// 使用的材料，直接原样返回会得到 `STATUS_LOGON_FAILURE`。这里改为使用解包出的 Windows 一次
+    /// 凭证构造 `KERB_INTERACTIVE_UNLOCK_LOGON` packed buffer，并填入 `Negotiate` authentication
+    /// package。packed buffer 内的 `UNICODE_STRING.Buffer` 是相对结构起点的字节偏移，而不是当前
+    /// 进程内真实指针；这是 LogonUI/LSA 消费 Credential Provider 序列化数据时要求的格式。
+    pub fn pack_for_logon(
+        &self,
+        provider_clsid: GUID,
+        usage_scenario: CREDENTIAL_PROVIDER_USAGE_SCENARIO,
+    ) -> Result<InboundSerialization> {
         let authentication_package = lookup_negotiate_auth_package()?;
-        let username = wide_null(self.packed_username());
-        let password = wide_null(&self.password);
+        let (domain, username) = self.logon_name_parts();
+        let message_type = kerb_message_type_for_usage(usage_scenario)?;
+        let bytes =
+            pack_kerb_interactive_unlock_logon(&domain, &username, &self.password, message_type)?;
         log_event(
             "PackRemoteCredential",
             format!(
-                "start username_chars={} domain_chars={} password_chars={} username_has_domain_separator={} username_has_upn_separator={} auth_package={}",
+                "packed_kerb_interactive_unlock_logon usage_scenario={:?} message_type={} username_chars={} domain_chars={} password_chars={} username_has_domain_separator={} username_has_upn_separator={} auth_package={} bytes_len={}",
+                usage_scenario,
+                message_type,
                 self.username_len(),
-                self.domain_len(),
+                domain.chars().count(),
                 self.password_len(),
                 self.username.contains('\\'),
                 self.username.contains('@'),
-                authentication_package
+                authentication_package,
+                bytes.len()
             ),
         );
-        let mut size = 0_u32;
-        let probe_result = unsafe {
-            // SAFETY: 第一次调用按 Windows API 约定传空缓冲区以获取所需字节数。
-            CredPackAuthenticationBufferW(
-                CRED_PACK_FLAGS(0),
-                PCWSTR(username.as_ptr()),
-                PCWSTR(password.as_ptr()),
-                None,
-                &mut size,
-            )
-        };
-        log_event(
-            "PackRemoteCredential",
-            format!(
-                "probe_result={} required_size={}",
-                result_label(&probe_result),
-                size
-            ),
-        );
-        if size == 0 {
-            log_event("PackRemoteCredential", "probe_returned_zero_size");
-            return Err(Error::from_hresult(E_FAIL));
-        }
-
-        let mut bytes = vec![0_u8; size as usize];
-        let pack_result = unsafe {
-            // SAFETY: `bytes` 长度来自上一轮 API 返回；用户名和密码宽字符串均以 NUL 结尾。
-            CredPackAuthenticationBufferW(
-                CRED_PACK_FLAGS(0),
-                PCWSTR(username.as_ptr()),
-                PCWSTR(password.as_ptr()),
-                Some(bytes.as_mut_ptr()),
-                &mut size,
-            )
-        };
-        log_event(
-            "PackRemoteCredential",
-            format!(
-                "pack_result={} final_size={}",
-                result_label(&pack_result),
-                size
-            ),
-        );
-        pack_result?;
-        bytes.truncate(size as usize);
 
         Ok(InboundSerialization {
             authentication_package,
             source_provider: provider_clsid,
             bytes,
         })
+    }
+}
+
+fn kerb_message_type_for_usage(usage_scenario: CREDENTIAL_PROVIDER_USAGE_SCENARIO) -> Result<u32> {
+    match usage_scenario {
+        CPUS_LOGON => Ok(KERB_INTERACTIVE_LOGON),
+        CPUS_UNLOCK_WORKSTATION => Ok(KERB_WORKSTATION_UNLOCK_LOGON),
+        _ => Err(Error::from_hresult(E_INVALIDARG)),
+    }
+}
+
+fn pack_kerb_interactive_unlock_logon(
+    domain: &str,
+    username: &str,
+    password: &str,
+    message_type: u32,
+) -> Result<Vec<u8>> {
+    let domain_bytes = utf16_bytes(domain)?;
+    let username_bytes = utf16_bytes(username)?;
+    let password_bytes = utf16_bytes(password)?;
+    let header_size = std::mem::size_of::<KerbInteractiveUnlockLogon>();
+    let total_size = header_size
+        .checked_add(domain_bytes.len())
+        .and_then(|size| size.checked_add(username_bytes.len()))
+        .and_then(|size| size.checked_add(password_bytes.len()))
+        .ok_or_else(|| Error::from_hresult(E_FAIL))?;
+
+    let domain_offset = header_size;
+    let username_offset = domain_offset + domain_bytes.len();
+    let password_offset = username_offset + username_bytes.len();
+    let header = KerbInteractiveUnlockLogon {
+        logon: KerbInteractiveLogon {
+            message_type,
+            logon_domain_name: packed_unicode_string(domain_bytes.len(), domain_offset)?,
+            user_name: packed_unicode_string(username_bytes.len(), username_offset)?,
+            password: packed_unicode_string(password_bytes.len(), password_offset)?,
+        },
+        logon_id: Luid::default(),
+    };
+
+    let mut bytes = Vec::with_capacity(total_size);
+    bytes.extend_from_slice(plain_old_data_bytes(&header));
+    bytes.extend_from_slice(&domain_bytes);
+    bytes.extend_from_slice(&username_bytes);
+    bytes.extend_from_slice(&password_bytes);
+    Ok(bytes)
+}
+
+fn packed_unicode_string(byte_len: usize, offset: usize) -> Result<PackedUnicodeString> {
+    Ok(PackedUnicodeString {
+        length: u16::try_from(byte_len).map_err(|_| Error::from_hresult(E_FAIL))?,
+        maximum_length: u16::try_from(byte_len).map_err(|_| Error::from_hresult(E_FAIL))?,
+        buffer: offset,
+    })
+}
+
+fn utf16_bytes(value: &str) -> Result<Vec<u8>> {
+    let wide: Vec<u16> = value.encode_utf16().collect();
+    let byte_len = wide
+        .len()
+        .checked_mul(std::mem::size_of::<u16>())
+        .ok_or_else(|| Error::from_hresult(E_FAIL))?;
+    let mut bytes = Vec::with_capacity(byte_len);
+    for unit in wide {
+        bytes.extend_from_slice(&unit.to_le_bytes());
+    }
+    Ok(bytes)
+}
+
+fn plain_old_data_bytes<T>(value: &T) -> &[u8] {
+    unsafe {
+        // SAFETY: 调用方只对 `#[repr(C)]` 且不含 Rust 托管资源的 POD 结构使用本函数；
+        // 返回切片只在 `value` 存活期间用于立即复制到 Vec。
+        std::slice::from_raw_parts((value as *const T).cast(), std::mem::size_of::<T>())
     }
 }
 
@@ -396,14 +474,6 @@ fn result_label(result: &Result<()>) -> String {
     }
 }
 
-fn wide_null(value: impl AsRef<str>) -> Vec<u16> {
-    value
-        .as_ref()
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect()
-}
-
 fn wide_buffer_to_string(buffer: &[u16]) -> String {
     let len = buffer
         .iter()
@@ -415,11 +485,14 @@ fn wide_buffer_to_string(buffer: &[u16]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        InboundSerialization, RemoteLogonCredential, negotiate_package_name_bytes,
-        wide_buffer_to_string,
+        InboundSerialization, KERB_INTERACTIVE_LOGON, KERB_WORKSTATION_UNLOCK_LOGON,
+        KerbInteractiveUnlockLogon, RemoteLogonCredential, negotiate_package_name_bytes,
+        pack_kerb_interactive_unlock_logon, wide_buffer_to_string,
     };
     use windows::Win32::System::Com::CoTaskMemFree;
-    use windows::Win32::UI::Shell::CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION;
+    use windows::Win32::UI::Shell::{
+        CPUS_LOGON, CPUS_UNLOCK_WORKSTATION, CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION,
+    };
     use windows::core::GUID;
 
     #[test]
@@ -471,7 +544,10 @@ mod tests {
             password: "secret".to_owned(),
         };
 
-        assert_eq!(credential.packed_username(), "ACME\\alice");
+        assert_eq!(
+            credential.logon_name_parts(),
+            ("ACME".to_owned(), "alice".to_owned())
+        );
     }
 
     #[test]
@@ -482,7 +558,24 @@ mod tests {
             password: "secret".to_owned(),
         };
 
-        assert_eq!(credential.packed_username(), "alice@example.com");
+        assert_eq!(
+            credential.logon_name_parts(),
+            ("ACME".to_owned(), "alice@example.com".to_owned())
+        );
+    }
+
+    #[test]
+    fn splits_domain_from_qualified_username_when_unpacked_domain_is_empty() {
+        let credential = RemoteLogonCredential {
+            username: "ACME\\alice".to_owned(),
+            domain: String::new(),
+            password: "secret".to_owned(),
+        };
+
+        assert_eq!(
+            credential.logon_name_parts(),
+            ("ACME".to_owned(), "alice".to_owned())
+        );
     }
 
     #[test]
@@ -496,5 +589,37 @@ mod tests {
 
         assert_eq!(&bytes[..bytes.len() - 1], b"Negotiate");
         assert_eq!(bytes.last(), Some(&0));
+    }
+
+    #[test]
+    fn packs_kerb_interactive_unlock_logon_with_relative_offsets() {
+        let bytes =
+            pack_kerb_interactive_unlock_logon("ACME", "alice", "secret", KERB_INTERACTIVE_LOGON)
+                .unwrap();
+        let header_size = std::mem::size_of::<KerbInteractiveUnlockLogon>();
+        let header = unsafe {
+            std::ptr::read_unaligned(bytes.as_ptr().cast::<KerbInteractiveUnlockLogon>())
+        };
+
+        assert_eq!(header.logon.message_type, KERB_INTERACTIVE_LOGON);
+        assert_eq!(header.logon.logon_domain_name.length, 8);
+        assert_eq!(header.logon.logon_domain_name.buffer, header_size);
+        assert_eq!(header.logon.user_name.length, 10);
+        assert_eq!(header.logon.user_name.buffer, header_size + 8);
+        assert_eq!(header.logon.password.length, 12);
+        assert_eq!(header.logon.password.buffer, header_size + 8 + 10);
+        assert_eq!(bytes.len(), header_size + 8 + 10 + 12);
+    }
+
+    #[test]
+    fn chooses_kerberos_message_type_from_usage_scenario() {
+        assert_eq!(
+            super::kerb_message_type_for_usage(CPUS_LOGON).unwrap(),
+            KERB_INTERACTIVE_LOGON
+        );
+        assert_eq!(
+            super::kerb_message_type_for_usage(CPUS_UNLOCK_WORKSTATION).unwrap(),
+            KERB_WORKSTATION_UNLOCK_LOGON
+        );
     }
 }

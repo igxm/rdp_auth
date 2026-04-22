@@ -77,11 +77,12 @@
 - [x] 使用 RDP 测试：mstsc 输入凭证后，目标机 CP 能收到 serialization 并成功继续登录。
 - [x] 用中文注释说明为什么不能自己调用 `LsaLogonUser`，以及为什么交给 Winlogon 处理。
 - [x] 使用 `CredUnPackAuthenticationBufferW` 从 RDP/NLA inbound authentication buffer 中解出 Windows 一次凭证，只在内存中短暂保存，不写日志。
-- [x] MFA 通过后使用 `CredPackAuthenticationBufferW` 重新打包凭证，并通过 `LsaLookupAuthenticationPackage("Negotiate")` 填入正确 authentication package，避免继续返回 `auth_package=0` 的 inbound buffer。
+- [x] 曾验证 `CredPackAuthenticationBufferW` 重新打包路线：API 能成功生成 buffer，但 VM 日志仍返回 `STATUS_LOGON_FAILURE / STATUS_INTERNAL_ERROR`，因此不再作为最终返回格式。
 - [x] 对照 `FaceWinUnlock-Tauri/Server` 的 Credential Provider 实现，确认 `CredPackAuthenticationBufferW` + `LsaLookupAuthenticationPackage("Negotiate")` 路线可作为优先验证方案。
 - [x] 修正 `Negotiate` authentication package 查询的 `LSA_STRING` 构造，按 Windows API 习惯保留 NUL 结尾容量，并补充查询结果诊断日志。
 - [x] 增强 RDP 凭证解包/重打包脱敏日志：记录 LSA 查询状态、CredUnPack/CredPack 返回结果、长度、package id 和用户名形态标记，不记录用户名、密码或 serialization 字节。
-- [ ] 如果增强诊断后仍返回 `STATUS_LOGON_FAILURE / STATUS_INTERNAL_ERROR`，再实现 `KERB_INTERACTIVE_LOGON` 或 `KERB_INTERACTIVE_UNLOCK_LOGON` 手工序列化方案，并与 `CredPackAuthenticationBufferW` 路线做 VM 对比。
+- [x] MFA 通过后改为构造 `KERB_INTERACTIVE_UNLOCK_LOGON` packed buffer：`UNICODE_STRING.Buffer` 保存相对结构起点的字节偏移，`CPUS_LOGON` 使用 `KerbInteractiveLogon`，`CPUS_UNLOCK_WORKSTATION` 使用 `KerbWorkstationUnlockLogon`。
+- [ ] 使用 VM 复测 RDP + NLA + mock MFA，通过新 Kerberos packed serialization 后应进入桌面；如果仍失败，继续根据 `ReportResult` 和 packed buffer 诊断日志定位。
 
 ## 阶段 4：二次认证 UI 状态机
 
@@ -103,8 +104,8 @@
 - [x] 设计 `MfaState` 状态机：空闲、发送短信中、等待输入、认证中、成功、失败。
 - [x] 使用 mock 数据模拟认证通过情况：手机验证码 `123456`、二次密码 `mock-password`。
 - [x] 二次认证未通过时，`GetSerialization` 不返回原始凭证。
-- [x] 二次认证通过后，`GetSerialization` 不再返回缓存的 inbound 原始 bytes，而是返回重新打包后的 Negotiate 凭证。
-- [x] 修复 mock MFA 通过后仍提示用户名或密码错误：Filter 记录 RDP 原始 Provider CLSID 时同时写入按 session 区分的 handoff 文件，Provider 在 `SetSerialization` 阶段跨进程恢复原始 Provider CLSID；随后解包 RDP inbound buffer 并重新打包为 Negotiate 凭证后放行。
+- [x] 二次认证通过后，`GetSerialization` 不再返回缓存的 inbound 原始 bytes，而是返回重新打包后的 Negotiate/Kerberos interactive 凭证。
+- [x] 初步处理 mock MFA 通过后仍提示用户名或密码错误：Filter 记录 RDP 原始 Provider CLSID 时同时写入按 session 区分的 handoff 文件，Provider 在 `SetSerialization` 阶段跨进程恢复原始 Provider CLSID；随后解包 RDP inbound buffer 并重新打包为 Kerberos interactive 凭证后放行，需 VM 复测确认。
 - [x] 增加 Credential Provider 脱敏诊断日志：记录 Filter、SetSerialization、mock 验证、GetSerialization、ReportResult 的链路阶段，便于定位 mock MFA 通过后仍无法进入桌面的问题。
 - [x] 点击取消按钮时，调用 Remote Desktop Services API 断开当前 RDP 会话。
 - [ ] 增加 RDP 注销/返回登录界面保护：如果 RDP 场景下没有收到 inbound credential serialization，不允许只显示 MFA 入口，默认断开当前 RDP 连接，迫使用户重新发起 RDP/NLA 并重新提供原始凭证。
@@ -216,6 +217,7 @@
 - [x] 单元测试：Credential Provider 诊断日志会清理换行符，避免单条日志被拆行。
 - [x] 单元测试：RDP 凭证重新打包时正确拼接域用户、保留 UPN 用户名。
 - [x] 单元测试：`Negotiate` authentication package 名称按 LSA 调用要求保留 NUL 结尾容量。
+- [x] 单元测试：Kerberos interactive packed buffer 使用相对偏移保存域、用户名、密码，并按 usage scenario 选择正确 message type。
 - [ ] 单元测试：IPC 请求响应序列化。
 - [ ] 单元测试：注册表配置解析。
 - [ ] 单元测试：API 错误映射。
