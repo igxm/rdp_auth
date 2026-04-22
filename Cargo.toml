@@ -15,5 +15,12 @@ version = "0.1.0"
 edition = "2024"
 license = "UNLICENSED"
 
+[workspace.dependencies]
+anyhow = "1.0"
+thiserror = "2.0"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = "0.3"
+
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

@@ -5,9 +5,13 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+anyhow.workspace = true
 auth_config = { path = "../auth_config" }
 auth_core = { path = "../auth_core" }
 auth_ipc = { path = "../auth_ipc" }
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber.workspace = true
 
 [[bin]]
 name = "remote_auth"

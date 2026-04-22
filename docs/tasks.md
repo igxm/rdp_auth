@@ -44,8 +44,8 @@
 - [x] 确定 Credential Provider DLL 日志边界：LogonUI 进程内仍保持当前轻量诊断写入策略，后续如接入 `tracing`，必须保证初始化幂等、写入失败被吞掉、不能启动不可控后台线程阻塞登录，且不得记录用户名、密码、验证码、token 或原始 serialization 字节。
 - [x] 调研 Rust 错误处理库：`thiserror` 适合为库 crate 定义可匹配、可测试的结构化错误枚举；`anyhow` 适合二进制入口和任务编排层快速附加上下文并向上返回。
 - [x] 确定错误处理主方案：`auth_config`、`auth_ipc`、`auth_api`、`credential_provider` 等库 crate 使用 `thiserror` 定义领域错误；`remote_auth`、`register_tool` 等 bin crate 使用 `anyhow::Result` 汇总错误并补充人类可读上下文。
-- [ ] 在 workspace 统一增加日志与错误处理依赖：`tracing`、`tracing-subscriber`、`tracing-appender`、`thiserror`、`anyhow`；按 crate 职责选择性引用，避免 Credential Provider DLL 引入不必要运行时负担。
-- [ ] 新增统一日志模块：定义日志目录、文件名、轮转策略、非阻塞 guard 生命周期、脱敏字段约定、初始化幂等策略，并区分诊断日志与业务审计日志。
+- [x] 在 workspace 统一增加日志与错误处理依赖：`tracing`、`tracing-subscriber`、`tracing-appender`、`thiserror`、`anyhow`；按 crate 职责选择性引用，避免 Credential Provider DLL 引入不必要运行时负担。
+- [x] 新增 helper 统一诊断日志模块：定义日志目录、文件名、按天轮转、非阻塞 guard 生命周期、脱敏字段约定和初始化幂等策略；业务审计日志后续单独实现。
 - [ ] 新增统一错误模块：各库 crate 定义 `Error` / `Result<T>` 类型别名，错误枚举必须包含安全的 Display 文案和可记录的诊断上下文，禁止把敏感输入直接放入错误消息。
 
 ## 总体目标
@@ -207,8 +207,8 @@
 - [x] 第一版 helper 先返回 mock 结果，用固定验证码验证主链路。
 - [ ] Credential Provider 通过命名管道调用 helper。
 - [ ] 增加超时处理，避免 LogonUI 长时间无响应。
-- [ ] helper 使用 `tracing` 输出结构化诊断日志，记录 request_id、认证方式、耗时、结果码和脱敏错误原因。
-- [ ] helper 使用 `anyhow` 作为入口层错误返回，IPC 协议错误和业务错误使用 `thiserror` 定义可匹配类型。
+- [x] helper 使用 `tracing` 输出结构化诊断日志，记录 helper 启动、请求类型、session、结果和 payload 状态；request_id、耗时和认证方式随审计上下文补齐。
+- [x] helper 使用 `anyhow` 作为入口层错误返回，IPC 协议错误使用 `thiserror` 定义可匹配类型；业务错误类型后续随真实 API 接入补齐。
 - [ ] 中文注释解释为何 CP DLL 不直接发网络请求。
 - [ ] 中文注释解释为何核心 helper 不做 Tauri GUI：登录链路需要服务化、短超时和低依赖，GUI 崩溃或 WebView2 缺失不得影响 RDP MFA fail closed 策略。
 
@@ -260,7 +260,7 @@
 - [x] 编写 helper / IPC 测试文档，详见 `docs/helper-ipc-test.md`。
 - [ ] 配置缺失时返回结构化错误。
 - [x] 认证方式配置缺失或非法时使用安全默认值；全部关闭时恢复默认认证方式集合。
-- [ ] helper 启动时输出脱敏诊断日志。
+- [x] helper 启动时输出脱敏诊断日志。
 - [x] 中文注释说明最小注册表引导项、统一配置文件字段意义、缺失字段处理策略和向后兼容迁移规则。
 
 ## 阶段 7：真实服务端 API
@@ -389,8 +389,8 @@
 - [x] 单元测试：IPC 请求响应序列化。
 - [ ] 单元测试：注册表配置解析。
 - [ ] 单元测试：API 错误映射。
-- [ ] 单元测试：`thiserror` 领域错误能稳定映射到用户可见文案、诊断码和 IPC 响应错误码。
-- [ ] 单元测试：日志脱敏函数会过滤手机号、验证码、密码、token、serialization 字节和换行符。
+- [x] 单元测试：`thiserror` IPC 编解码错误能稳定映射到用户可见文案。
+- [x] 单元测试：日志脱敏函数会过滤手机号、验证码、密码、token、serialization 字节和换行符。
 - [ ] 集成测试：`tracing-appender` 日志能写入 `C:\ProgramData\rdp_auth\logs` 并按配置轮转。
 - [ ] 集成测试：helper mock 服务。
 - [ ] 集成测试：helper session notification mock，验证 lock/unlock/disconnect/logoff 事件能更新或清理内存状态。

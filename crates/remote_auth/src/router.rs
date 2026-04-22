@@ -5,6 +5,7 @@
 use std::time::Instant;
 
 use auth_ipc::{IpcRequest, IpcResponse, IpcResponsePayload, SessionStateResponse};
+use tracing::info;
 
 use crate::policy::PolicyContext;
 use crate::session_state::SessionAuthState;
@@ -15,7 +16,9 @@ pub fn handle_request(
     now: Instant,
     policy: PolicyContext,
 ) -> IpcResponse {
-    match request {
+    let request_kind = request_kind(&request);
+    let session_id = request_session_id(&request);
+    let response = match request {
         IpcRequest::GetPolicySnapshot { .. } => IpcResponse::success_with_payload(
             "策略已加载",
             IpcResponsePayload::PolicySnapshot(policy.snapshot),
@@ -52,6 +55,43 @@ pub fn handle_request(
             crate::mfa::handle_verify_second_password(&password)
         }
         IpcRequest::PostLoginLog { .. } => IpcResponse::failure("该 helper 请求尚未接入"),
+    };
+    info!(
+        target: "remote_auth",
+        event = "ipc_request_handled",
+        request = request_kind,
+        session_id,
+        ok = response.ok,
+        has_payload = response.payload.is_some(),
+        message = %crate::diagnostics::sanitize_log_value(&response.message),
+        "helper IPC 请求已处理"
+    );
+    response
+}
+
+fn request_kind(request: &IpcRequest) -> &'static str {
+    match request {
+        IpcRequest::GetPolicySnapshot { .. } => "get_policy_snapshot",
+        IpcRequest::MarkSessionAuthenticated { .. } => "mark_session_authenticated",
+        IpcRequest::HasAuthenticatedSession { .. } => "has_authenticated_session",
+        IpcRequest::ClearSessionState { .. } => "clear_session_state",
+        IpcRequest::SendSms { .. } => "send_sms",
+        IpcRequest::VerifySms { .. } => "verify_sms",
+        IpcRequest::VerifySecondPassword { .. } => "verify_second_password",
+        IpcRequest::PostLoginLog { .. } => "post_login_log",
+    }
+}
+
+fn request_session_id(request: &IpcRequest) -> u32 {
+    match request {
+        IpcRequest::GetPolicySnapshot { session_id }
+        | IpcRequest::MarkSessionAuthenticated { session_id }
+        | IpcRequest::HasAuthenticatedSession { session_id }
+        | IpcRequest::ClearSessionState { session_id }
+        | IpcRequest::SendSms { session_id, .. }
+        | IpcRequest::VerifySms { session_id, .. }
+        | IpcRequest::VerifySecondPassword { session_id, .. }
+        | IpcRequest::PostLoginLog { session_id, .. } => *session_id,
     }
 }
 

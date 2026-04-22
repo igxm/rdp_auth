@@ -4,10 +4,9 @@
 //! 序列化入口，让 `remote_auth` 服务端和 `credential_provider` 客户端共享同一套
 //! 协议。LogonUI 进程内的 DLL 只应该发起短小、可控的 IPC 调用，不直接承担网络访问。
 
-use std::fmt;
-
 use auth_core::AuthMethod;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 /// helper 支持的请求类型。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,22 +91,13 @@ pub struct SessionStateResponse {
     pub ttl_remaining_seconds: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum IpcCodecError {
+    #[error("IPC JSON 序列化失败: {0}")]
     Serialize(String),
+    #[error("IPC JSON 解析失败: {0}")]
     Deserialize(String),
 }
-
-impl fmt::Display for IpcCodecError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Serialize(message) => write!(formatter, "IPC JSON 序列化失败: {message}"),
-            Self::Deserialize(message) => write!(formatter, "IPC JSON 解析失败: {message}"),
-        }
-    }
-}
-
-impl std::error::Error for IpcCodecError {}
 
 impl IpcRequest {
     pub fn to_json(&self) -> Result<String, IpcCodecError> {
