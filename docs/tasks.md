@@ -14,7 +14,7 @@
 
 1. 先用 VM 验证现有 RDP pass-through 主链路、缺失 serialization 断开保护、MFA 超时断开和短信倒计时 UI 刷新，确认不会误断首次登录。
 2. 再把超时、缺失 serialization 等待窗口、短信重新发送时间迁移到统一 TOML 配置，并让 `register_tool health` 能显示当前生效值。
-3. 然后实现 helper / IPC 的 mock 服务，把 CP 内的 mock 逻辑逐步迁移到 helper，保持 Credential Provider DLL 轻量。
+3. 然后实现 helper / IPC 的 mock 服务和 helper 内存态 session 跟踪，把 CP 内的 mock 逻辑逐步迁移到 helper，保持 Credential Provider DLL 轻量。
 4. 最后接入真实 API、远程配置、审计日志和微信扫码。
 
 ## 配置与文件读取边界
@@ -56,6 +56,9 @@
 - [x] 放行能力以 inbound serialization 为准：只有收到 `SetSerialization` 并解包出一次 Windows 凭证后，MFA 通过才允许重新打包并交给 LogonUI/LSA。
 - [x] 无 inbound serialization 的 RDP 孤立 MFA 入口必须断开：当前架构不保存首次登录密码，也不实现一次凭证采集，所以不能让用户停留在无法放行的 MFA Tile。
 - [ ] 增加按 session 区分的轻量历史状态标记：`ReportResult status=0` 后记录当前 session 曾成功完成 RDP MFA，用于区分“首次登录 serialization 慢到”和“已登录会话锁屏/注销后返回 LogonUI”。
+- [ ] 历史状态标记的目标实现放在 helper 内存中维护，不写注册表、不写状态文件；Credential Provider 只通过短超时 IPC 查询和更新。
+- [ ] helper 通过 Windows session notification 监听 session lock、unlock、disconnect、logoff 等事件，维护 session 内存状态并及时清理，Credential Provider 不直接监听 Win+L 事件。
+- [ ] 如果 helper 不可用或 IPC 超时，Credential Provider 不得因此放行；回退到现有缺失 serialization 等待窗口和 fail closed 断开策略。
 - [ ] 缺失 serialization 保护按上下文使用不同等待窗口：已有成功会话返回 LogonUI 时使用短窗口，疑似首次登录时使用较宽松窗口，避免误断正常 RDP 登录。
 - [ ] 将缺失 serialization 等待窗口改为统一配置项，例如 `mfa.missing_serialization_grace_seconds`，缺失或非法时使用安全默认值。
 - [ ] 日志补齐场景链路：记录 `SetUsageScenario`、`Filter`、`UpdateRemoteCredential`、`GetCredentialCount`、`GetCredentialAt`、`SetSerialization`、`MissingSerialization`、`MfaTimeout`、`GetSerialization`、`ReportResult` 的关键脱敏字段。
@@ -146,7 +149,17 @@
 ## 阶段 5：本地 helper 与 IPC
 
 - [ ] `remote_auth` 启动命名管道服务。
+- [ ] 将 `remote_auth` 设计为可常驻的 helper 进程，后续可由安装工具注册启动路径；启动失败不能阻塞 LogonUI。
+- [ ] helper 内存中维护 `SessionAuthState`，按 Windows session id 记录是否已成功完成 RDP MFA、最后更新时间、最近一次会话事件和诊断状态码，不保存用户名、密码、验证码、token 或 serialization。
+- [ ] helper 使用 Windows session notification 订阅会话事件，至少处理 lock、unlock、disconnect、logoff；事件处理只更新内存状态和脱敏诊断日志。
+- [ ] helper 在 logoff、session end、状态过期或显式清理请求时移除对应 session 内存状态，避免 session id 复用导致误判。
+- [ ] 定义 session 状态 TTL，超过 TTL 的状态视为无效并清理；TTL 后续从统一配置读取。
 - [ ] `auth_ipc` 定义 JSON 请求响应协议。
+- [ ] `auth_ipc` 增加 `mark_session_authenticated` 请求：Credential Provider 在 `ReportResult status=0` 后通知 helper 标记当前 session 已完成 RDP MFA。
+- [ ] `auth_ipc` 增加 `has_authenticated_session` 请求：Credential Provider 在 RDP 会话无 inbound serialization 时查询 helper，命中则直接走短等待/立即断开策略。
+- [ ] `auth_ipc` 增加 `clear_session_state` 请求：Credential Provider 或 register_tool 可请求清理指定 session 状态，用于断开、卸载或异常恢复。
+- [ ] 所有 session 状态 IPC 必须设置极短超时；helper 不可用、超时或返回非法响应时，Credential Provider 回退到 fail closed 策略，不得放行。
+- [ ] IPC 响应只返回布尔值、状态码、TTL/时间戳等非敏感信息，不返回用户标识、手机号、密码或原始凭证材料。
 - [ ] 支持 `get_policy_snapshot` 请求：helper 读取本地/远程配置和必要文件后，返回 CP 可渲染的策略快照，包括认证方式列表、手机号来源、脱敏手机号、手机号字段是否可编辑、超时配置和用户可见提示。
 - [ ] 支持 `send_sms` 请求。
 - [ ] `send_sms` 请求携带手机号来源标记；文件读取手机号模式下 CP 不传真实手机号，helper 使用自己读取并校验过的真实手机号；手动输入模式下 CP 只传用户输入手机号。
@@ -180,6 +193,8 @@
 - [ ] 定义缺失 RDP 原始凭证保护配置，例如 `mfa.missing_serialization_grace_seconds`，默认先按 VM 结果确定为 1 到 5 秒之间，设置过小/非法时恢复安全默认值。
 - [ ] 定义短信重新发送配置，例如 `mfa.sms_resend_seconds`，默认 60 秒；helper/API 接入后优先使用服务端返回的限流时间。
 - [ ] 定义 RDP 断开策略配置，例如 `mfa.disconnect_when_missing_serialization = true`，应急关闭时必须记录脱敏诊断日志并保持 fail closed，不得绕过 MFA。
+- [ ] 定义 helper session 状态配置，例如 `mfa.session_state_ttl_seconds`、`mfa.authenticated_session_short_grace_seconds`、`mfa.initial_login_grace_seconds`，用于区分已认证会话返回 LogonUI 和首次登录等待 serialization。
+- [ ] 定义 helper IPC 超时配置，例如 `mfa.helper_ipc_timeout_ms`，默认应足够短，避免 LogonUI 被 helper 卡住。
 - [ ] 定义手机号来源配置，例如 `phone.source = "file" | "input"`；默认建议为 `input`，避免文件缺失导致测试环境无法收验证码。
 - [ ] 定义手机号文件路径配置，例如 `phone.file_path = "C:\\ProgramData\\rdp_auth\\phone.txt"`，仅在 `phone.source = "file"` 时由 helper 读取，Credential Provider 不直接打开该文件。
 - [ ] `auth_core` 提供手机号校验和脱敏函数：合法手机号按 `138****8888` 格式展示，非法手机号不暴露前后缀。
@@ -253,8 +268,11 @@
 - [x] `register_tool install` 写入 Credential Provider 注册表项。
 - [x] `register_tool uninstall` 删除注册表项。
 - [ ] 注册 helper 路径。
+- [ ] `register_tool install` 注册或记录 helper 启动路径，并确保 helper 可访问统一配置文件和日志目录。
+- [ ] `register_tool health` 检查 helper 是否可启动/可连通、命名管道是否可用、session notification 是否初始化成功。
 - [ ] `register_tool status` / `health` 显示当前启用的认证方式，便于排查配置文件是否生效。
 - [ ] `register_tool status` / `health` 显示当前 MFA 超时、缺失 serialization 等待窗口、短信重新发送时间和配置来源，便于排查 VM 行为。
+- [ ] `register_tool status` / `health` 显示 helper session 状态策略：状态 TTL、首次登录等待窗口、已认证会话短等待窗口和 IPC 超时。
 - [x] 初始化 `C:\ProgramData\rdp_auth` 目录。
 - [x] 初始化日志目录。
 - [ ] 初始化远程配置缓存目录，例如 `C:\ProgramData\rdp_auth\config`。
@@ -275,8 +293,12 @@
 - [x] 单元测试：Credential Provider 内置认证超时默认值为 120 秒，初始 generation 为 0。
 - [ ] 单元测试：统一配置文件中的认证超时配置解析与默认值。
 - [ ] 单元测试：统一配置文件中的缺失 serialization 等待窗口和短信重新发送时间解析与默认值。
+- [ ] 单元测试：统一配置文件中的 helper session 状态 TTL、首次登录等待窗口、已认证会话短等待窗口和 IPC 超时解析与默认值。
 - [ ] 单元测试：缺失 serialization 保护 generation 变化后旧定时器不会断开新登录尝试。
 - [ ] 单元测试：短信倒计时 generation 变化后旧刷新线程不会覆盖新倒计时。
+- [ ] 单元测试：helper `SessionAuthState` 标记、查询、TTL 过期和清理逻辑。
+- [ ] 单元测试：helper 收到 logoff/disconnect/session end 事件后清理对应 session 状态。
+- [ ] 单元测试：`mark_session_authenticated`、`has_authenticated_session`、`clear_session_state` IPC 请求响应序列化。
 - [ ] 单元测试：手机号校验规则，合法手机号满足 `^1[3-9]\d{9}$`，非法手机号被拒绝。
 - [ ] 单元测试：手机号脱敏规则，`13812348888` 显示为 `138****8888`，非法手机号显示为安全占位文案。
 - [ ] 单元测试：helper 文件读取手机号模式会让 CP 禁用手机号输入框，并且 UI 只显示脱敏手机号。
@@ -299,6 +321,9 @@
 - [ ] 单元测试：日志脱敏函数会过滤手机号、验证码、密码、token、serialization 字节和换行符。
 - [ ] 集成测试：`tracing-appender` 日志能写入 `C:\ProgramData\rdp_auth\logs` 并按配置轮转。
 - [ ] 集成测试：helper mock 服务。
+- [ ] 集成测试：helper session notification mock，验证 lock/unlock/disconnect/logoff 事件能更新或清理内存状态。
+- [ ] 集成测试：Credential Provider 在 helper 命中已认证 session 时使用短等待/立即断开策略，在 helper 未命中时使用首次登录等待策略。
+- [ ] 集成测试：helper 不可用或 IPC 超时时，Credential Provider 回退 fail closed，不放行且不长时间阻塞 LogonUI。
 - [ ] 集成测试：`send_sms` 请求会携带 host_public_ip，并在公网 IP 获取失败时按策略降级。
 - [ ] 集成测试：远程配置拉取、缓存、周期刷新和失败回退。
 - [ ] 集成测试：CP 调 helper 超时。
@@ -308,6 +333,9 @@
 - [ ] VM 测试：RDP 未传入 serialization 的降级提示。
 - [ ] VM 测试：RDP 用户注销后返回登录界面时，若没有新的 inbound serialization，应断开 RDP 连接而不是停留在孤立 MFA 入口。（代码路径已实现，仍需 VM 验证）
 - [ ] VM 测试：RDP 用户锁屏后返回登录界面时，记录实际 usage scenario，并验证无新 inbound serialization 时按策略断开。
+- [ ] VM 测试：ReportResult 成功后 helper 记录当前 session 已认证；锁屏/注销返回 LogonUI 且无 inbound serialization 时，helper 命中后走短等待/立即断开。
+- [ ] VM 测试：helper 重启后内存状态丢失时，系统仍按首次登录等待窗口处理，不得放行孤立 MFA。
+- [ ] VM 测试：session logoff/disconnect 后 helper 清理状态，后续新 session 不得复用旧认证标记。
 - [ ] VM 测试：短信按钮点击后逐秒更新 `重新发送(n)`，归零后恢复 `发送验证码` 并可再次点击。
 - [ ] VM 测试：服务端不可达时默认拒绝登录。
 - [x] VM 测试：系统默认 Provider 未隐藏时可恢复登录。
@@ -328,6 +356,9 @@
 - [ ] 使用后清理敏感内存，必要处调用 Windows 安全清零 API。
 - [ ] helper 路径固定，并校验文件存在性。
 - [ ] CP 与 helper IPC 增加调用方校验或权限控制。
+- [ ] helper session 内存状态只保存 session id、状态枚举、时间戳和脱敏诊断码，不保存用户名、手机号、密码、验证码、token 或 serialization。
+- [ ] helper session 状态必须随 logoff/disconnect/session end/TTL 过期清理，避免 Windows session id 复用导致错误断开。
+- [ ] CP 查询 helper session 状态时必须设置短超时，helper 异常时默认 fail closed，不能因为状态服务不可用而绕过 MFA。
 - [ ] 默认 fail closed：二次认证服务不可用时拒绝放行。
 - [ ] 如需应急码，必须记录审计日志。
 - [ ] 所有错误提示区分用户可见文案和诊断日志。
