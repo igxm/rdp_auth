@@ -4,8 +4,11 @@
 //! 保持为可单元测试的普通 Rust 代码。后续维护时优先把业务判断放在这里，避免
 //! `credential_provider` DLL 里混入难以调试的业务分支。
 
+use serde::{Deserialize, Serialize};
+
 /// 用户在登录界面选择的二次认证方式。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AuthMethod {
     /// 手机短信验证码认证，第一版主链路之一。
     PhoneCode,
@@ -40,7 +43,8 @@ pub fn mask_phone_number(value: &str) -> String {
 }
 
 /// Credential Provider 内部使用的二次认证状态。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MfaState {
     /// 初始空闲状态，此时还没有发起任何 helper 调用。
     Idle,
@@ -64,7 +68,8 @@ impl MfaState {
 }
 
 /// 跨 crate 共享的认证错误类型。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AuthError {
     /// LogonUI 没有通过 `SetSerialization` 传入 RDP 原始凭证。
     MissingInboundSerialization,

@@ -180,16 +180,16 @@
 - [ ] 明确 GUI 边界：后续 Tauri 仅作为独立管理员配置工具，通过 helper 管理 IPC 或 `register_tool` 能力读写配置和查询状态；Credential Provider 永远不直接调用 Tauri GUI。
 - [ ] `remote_auth` 启动命名管道服务。
 - [ ] 将 `remote_auth` 设计为可常驻的 helper 进程，后续可由安装工具注册启动路径；启动失败不能阻塞 LogonUI。
-- [ ] helper 内存中维护 `SessionAuthState`，按 Windows session id 记录是否已成功完成 RDP MFA、最后更新时间、最近一次会话事件和诊断状态码，不保存用户名、密码、验证码、token 或 serialization。
+- [x] helper 内存中维护 `SessionAuthState`，按 Windows session id 记录是否已成功完成 RDP MFA、最后更新时间、最近一次会话事件和诊断状态码，不保存用户名、密码、验证码、token 或 serialization。
 - [ ] helper 使用 Windows session notification 订阅会话事件，至少处理 lock、unlock、disconnect、logoff；事件处理只更新内存状态和脱敏诊断日志。
 - [ ] helper 在 logoff、session end、状态过期或显式清理请求时移除对应 session 内存状态，避免 session id 复用导致误判。
 - [ ] 定义 session 状态 TTL，超过 TTL 的状态视为无效并清理；TTL 后续从统一配置读取。
-- [ ] `auth_ipc` 定义 JSON 请求响应协议。
-- [ ] `auth_ipc` 增加 `mark_session_authenticated` 请求：Credential Provider 在 `ReportResult status=0` 后通知 helper 标记当前 session 已完成 RDP MFA。
-- [ ] `auth_ipc` 增加 `has_authenticated_session` 请求：Credential Provider 在 RDP 会话无 inbound serialization 时查询 helper，命中则直接走短等待/立即断开策略。
-- [ ] `auth_ipc` 增加 `clear_session_state` 请求：Credential Provider 或 register_tool 可请求清理指定 session 状态，用于断开、卸载或异常恢复。
+- [x] `auth_ipc` 定义 JSON 请求响应协议。
+- [x] `auth_ipc` 增加 `mark_session_authenticated` 请求：Credential Provider 在 `ReportResult status=0` 后通知 helper 标记当前 session 已完成 RDP MFA。
+- [x] `auth_ipc` 增加 `has_authenticated_session` 请求：Credential Provider 在 RDP 会话无 inbound serialization 时查询 helper，命中则直接走短等待/立即断开策略。
+- [x] `auth_ipc` 增加 `clear_session_state` 请求：Credential Provider 或 register_tool 可请求清理指定 session 状态，用于断开、卸载或异常恢复。
 - [ ] 所有 session 状态 IPC 必须设置极短超时；helper 不可用、超时或返回非法响应时，Credential Provider 回退到 fail closed 策略，不得放行。
-- [ ] IPC 响应只返回布尔值、状态码、TTL/时间戳等非敏感信息，不返回用户标识、手机号、密码或原始凭证材料。
+- [x] IPC 响应只返回布尔值、状态码、TTL/时间戳等非敏感信息，不返回用户标识、手机号、密码或原始凭证材料。
 - [ ] 支持 `get_policy_snapshot` 请求：helper 读取本地/远程配置和必要文件后，返回 CP 可渲染的策略快照，包括认证方式列表、手机号来源、脱敏手机号、手机号字段是否可编辑、超时配置和用户可见提示。
 - [ ] 支持 `send_sms` 请求。
 - [ ] `send_sms` 请求携带手机号来源标记；文件读取手机号模式下 CP 不传真实手机号，helper 使用自己读取并校验过的真实手机号；手动输入模式下 CP 只传用户输入手机号。
@@ -256,6 +256,7 @@
 - [x] `register_tool config export` 导出明文 TOML 供管理员编辑，命令输出必须提示明文敏感和删除临时文件；导出操作需要管理员显式执行。
 - [x] `register_tool config import` 读取明文 TOML 后立即加密写回 `.enc` 文件，已有加密配置写入前创建加密备份，不保留明文副本。
 - [x] `register_tool health` 显示配置文件是否加密、AES 算法、密文长度、解密是否成功、配置来源和最后修改时间；不得显示配置明文内容。
+- [x] 编写 helper / IPC 测试文档，详见 `docs/helper-ipc-test.md`。
 - [ ] 配置缺失时返回结构化错误。
 - [x] 认证方式配置缺失或非法时使用安全默认值；全部关闭时恢复默认认证方式集合。
 - [ ] helper 启动时输出脱敏诊断日志。
@@ -365,14 +366,14 @@
 - [x] 单元测试：`register_tool config import/export` 覆盖 CLI 解析、明文 TOML 归一化、非法 TOML 拒绝和加密配置备份命名；真实导入/导出仍需在安装环境做集成验证。
 - [ ] 单元测试：缺失 serialization 保护 generation 变化后旧定时器不会断开新登录尝试。
 - [ ] 单元测试：短信倒计时 generation 变化后旧刷新线程不会覆盖新倒计时。
-- [ ] 单元测试：helper `SessionAuthState` 标记、查询、TTL 过期和清理逻辑。
+- [x] 单元测试：helper `SessionAuthState` 标记、查询、TTL 过期和清理逻辑。
 - [ ] 单元测试：helper 收到 logoff/disconnect/session end 事件后清理对应 session 状态。
-- [ ] 单元测试：`mark_session_authenticated`、`has_authenticated_session`、`clear_session_state` IPC 请求响应序列化。
+- [x] 单元测试：`mark_session_authenticated`、`has_authenticated_session`、`clear_session_state` IPC 请求响应序列化。
 - [x] 单元测试：手机号校验规则，合法手机号满足 `^1[3-9]\d{9}$`，非法手机号被拒绝。
 - [x] 单元测试：手机号脱敏规则，`13812348888` 显示为 `138****8888`，非法手机号显示为安全占位文案。
 - [ ] 单元测试：helper 文件读取手机号模式会让 CP 禁用手机号输入框，并且 UI 只显示脱敏手机号。
 - [ ] 单元测试：手动输入手机号模式下，手机号不合法时禁止发送验证码并显示错误提示。
-- [ ] 单元测试：`get_policy_snapshot` 不包含文件模式真实手机号，只包含脱敏手机号、字段可编辑状态和策略来源。
+- [x] 单元测试：`get_policy_snapshot` 不包含文件模式真实手机号，只包含脱敏手机号、字段可编辑状态和策略来源。
 - [ ] 单元测试：本机内网 IP 枚举会过滤 loopback、link-local、未启用网卡，并保留多网卡有效地址。
 - [ ] 单元测试：公网 IP 获取失败时按策略返回 `unknown` 或 fail closed。
 - [ ] 单元测试：审计日志字段序列化包含 client_ip、host_public_ip、host_private_ips、host_uuid、session_id，且不包含手机号、验证码、密码、token。
@@ -383,7 +384,7 @@
 - [x] 单元测试：RDP 凭证重新打包时正确拼接域用户、保留 UPN 用户名。
 - [x] 单元测试：`Negotiate` authentication package 名称按 LSA 调用要求保留 NUL 结尾容量。
 - [x] 单元测试：Kerberos interactive packed buffer 使用相对偏移保存域、用户名、密码，并按 usage scenario 选择正确 message type。
-- [ ] 单元测试：IPC 请求响应序列化。
+- [x] 单元测试：IPC 请求响应序列化。
 - [ ] 单元测试：注册表配置解析。
 - [ ] 单元测试：API 错误映射。
 - [ ] 单元测试：`thiserror` 领域错误能稳定映射到用户可见文案、诊断码和 IPC 响应错误码。
@@ -436,8 +437,8 @@
 - [ ] 使用后清理敏感内存，必要处调用 Windows 安全清零 API。
 - [ ] helper 路径固定，并校验文件存在性。
 - [ ] CP 与 helper IPC 增加调用方校验或权限控制。
-- [ ] helper session 内存状态只保存 session id、状态枚举、时间戳和脱敏诊断码，不保存用户名、手机号、密码、验证码、token 或 serialization。
-- [ ] helper session 状态必须随 logoff/disconnect/session end/TTL 过期清理，避免 Windows session id 复用导致错误断开。
+- [x] helper session 内存状态只保存 session id、状态枚举、时间戳和脱敏诊断码，不保存用户名、手机号、密码、验证码、token 或 serialization。
+- [x] helper session 状态必须随 logoff/disconnect/session end/TTL 过期清理，避免 Windows session id 复用导致错误断开。
 - [ ] CP 查询 helper session 状态时必须设置短超时，helper 异常时默认 fail closed，不能因为状态服务不可用而绕过 MFA。
 - [ ] Tauri 管理 GUI 不得持有 Windows 一次登录密码、RDP serialization、验证码、二次密码、API token 或机器码；所有配置写入必须经加密层和权限校验。
 - [ ] Tauri 管理 GUI 的安装、缺失、崩溃、升级失败或 WebView2/runtime 异常不得影响 CP/helper 的登录链路、session 状态清理和 fail closed 策略。

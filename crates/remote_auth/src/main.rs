@@ -3,6 +3,8 @@
 //! 后续它会作为 Credential Provider DLL 的外部 helper 运行，负责注册表配置、网络 API、
 //! 日志和命名管道。把这些逻辑移出 DLL，是为了让 LogonUI 进程保持轻量、可恢复。
 
+mod session_state;
+
 use auth_ipc::IpcResponse;
 
 fn main() {
