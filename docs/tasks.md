@@ -10,6 +10,14 @@
 - 网络请求、注册表读取、业务审计日志、策略判断都放到本地 helper，避免 LogonUI 进程被阻塞或拖垮；Credential Provider DLL 只允许写入轻量脱敏诊断日志，且日志失败不能影响登录流程。
 - 第一阶段不隐藏系统默认 Credential Provider，确认 RDP pass-through 链路稳定后再实现过滤器，降低锁死测试机风险。
 
+## 配置与文件读取边界
+
+- [x] 明确边界：Credential Provider DLL 不直接读取手机号文件、远程配置缓存、`reginfo.ini` 或复杂策略文件，避免 LogonUI 进程被磁盘 IO、权限、杀毒软件或配置解析错误拖垮。
+- [x] 明确边界：Credential Provider DLL 只消费 helper 通过 IPC 返回的策略快照，例如可用认证方式、手机号显示值、手机号是否可编辑、超时时间和错误提示。
+- [ ] helper 负责读取和校验手机号文件、远程配置缓存、`reginfo.ini`、公网 IP endpoint、认证方式开关和超时策略，并把结果转换为 CP 可直接渲染的脱敏策略。
+- [ ] helper 下发给 CP 的手机号策略只允许包含脱敏展示值和是否可编辑标记；真实手机号仅在 helper 内存中用于发送短信请求，不回传给 CP 日志。
+- [ ] CP 与 helper IPC 增加 `get_policy_snapshot` 或等效请求，CP 初始化和刷新 UI 时通过该请求获取认证方式、手机号来源、脱敏手机号、字段可编辑状态和超时配置。
+
 ## 日志与错误处理技术选型
 
 - [x] 调研 Rust 日志库：`tracing` 是结构化、事件驱动诊断框架，`tracing-appender` 支持滚动文件和非阻塞写入；`tklog` 提供轻量同步/异步文件日志和切割能力，但生态集成、span 上下文和 crate 互操作性弱于 `tracing`。
@@ -82,7 +90,7 @@
 - [x] 修正 `Negotiate` authentication package 查询的 `LSA_STRING` 构造，按 Windows API 习惯保留 NUL 结尾容量，并补充查询结果诊断日志。
 - [x] 增强 RDP 凭证解包/重打包脱敏日志：记录 LSA 查询状态、CredUnPack/CredPack 返回结果、长度、package id 和用户名形态标记，不记录用户名、密码或 serialization 字节。
 - [x] MFA 通过后改为构造 `KERB_INTERACTIVE_UNLOCK_LOGON` packed buffer：`UNICODE_STRING.Buffer` 保存相对结构起点的字节偏移，`CPUS_LOGON` 使用 `KerbInteractiveLogon`，`CPUS_UNLOCK_WORKSTATION` 使用 `KerbWorkstationUnlockLogon`。
-- [ ] 使用 VM 复测 RDP + NLA + mock MFA，通过新 Kerberos packed serialization 后应进入桌面；如果仍失败，继续根据 `ReportResult` 和 packed buffer 诊断日志定位。
+- [x] 使用 VM 复测 RDP + NLA + mock MFA，新 Kerberos packed serialization 已进入桌面，日志确认 `ReportResult status=0x00000000 sub_status=0x00000000`。
 
 ## 阶段 4：二次认证 UI 状态机
 
@@ -96,8 +104,8 @@
 - [x] 认证方式切换后，通过 `ICredentialProviderCredentialEvents` 主动通知 LogonUI 刷新字段，避免手机号/验证码/二次密码 UI 不同步。
 - [x] 实现输入框取值和状态文本刷新。
 - [x] 实现按钮点击回调。
-- [ ] 手机号认证支持两种来源：配置文件读取手机号、用户手动输入手机号；来源策略由配置层统一下发，Credential Provider 只负责展示和轻量校验。
-- [ ] 文件读取手机号模式：手机号字段显示脱敏格式，例如 `138****8888`，并设置为不可编辑，发送短信时使用内存中的真实手机号。
+- [ ] 手机号认证支持两种来源：helper 从配置/文件读取手机号、用户手动输入手机号；来源策略由 helper 统一下发，Credential Provider 只负责展示和轻量校验。
+- [ ] helper 读取手机号模式：手机号字段显示 helper 返回的脱敏格式，例如 `138****8888`，并设置为不可编辑；Credential Provider 不接触真实手机号。
 - [ ] 手动输入手机号模式：手机号字段允许编辑，点击发送验证码前必须通过手机号正则校验，默认规则为 `^1[3-9]\d{9}$`。
 - [ ] 手机号不合法时不允许进入发送短信流程，刷新状态提示为“请输入正确的手机号”或“手机号配置无效，请联系管理员”。
 - [x] 删除底部重复状态区域，避免登录按钮下方再出现一块“第二部分”内容。
@@ -109,7 +117,7 @@
 - [x] 使用 mock 数据模拟认证通过情况：手机验证码 `123456`、二次密码 `mock-password`。
 - [x] 二次认证未通过时，`GetSerialization` 不返回原始凭证。
 - [x] 二次认证通过后，`GetSerialization` 不再返回缓存的 inbound 原始 bytes，而是返回重新打包后的 Negotiate/Kerberos interactive 凭证。
-- [x] 初步处理 mock MFA 通过后仍提示用户名或密码错误：Filter 记录 RDP 原始 Provider CLSID 时同时写入按 session 区分的 handoff 文件，Provider 在 `SetSerialization` 阶段跨进程恢复原始 Provider CLSID；随后解包 RDP inbound buffer 并重新打包为 Kerberos interactive 凭证后放行，需 VM 复测确认。
+- [x] 修复 mock MFA 通过后仍提示用户名或密码错误：Filter 记录 RDP 原始 Provider CLSID 时同时写入按 session 区分的 handoff 文件，Provider 在 `SetSerialization` 阶段跨进程恢复原始 Provider CLSID；随后解包 RDP inbound buffer 并重新打包为 Kerberos interactive 凭证后放行，VM 日志已验证成功。
 - [x] 增加 Credential Provider 脱敏诊断日志：记录 Filter、SetSerialization、mock 验证、GetSerialization、ReportResult 的链路阶段，便于定位 mock MFA 通过后仍无法进入桌面的问题。
 - [x] 点击取消按钮时，调用 Remote Desktop Services API 断开当前 RDP 会话。
 - [ ] 增加 RDP 注销/返回登录界面保护：如果 RDP 场景下没有收到 inbound credential serialization，不允许只显示 MFA 入口，默认断开当前 RDP 连接，迫使用户重新发起 RDP/NLA 并重新提供原始凭证。
@@ -119,9 +127,11 @@
 
 - [ ] `remote_auth` 启动命名管道服务。
 - [ ] `auth_ipc` 定义 JSON 请求响应协议。
+- [ ] 支持 `get_policy_snapshot` 请求：helper 读取本地/远程配置和必要文件后，返回 CP 可渲染的策略快照，包括认证方式列表、手机号来源、脱敏手机号、手机号字段是否可编辑、超时配置和用户可见提示。
 - [ ] 支持 `send_sms` 请求。
-- [ ] `send_sms` 请求携带手机号来源标记和真实手机号；IPC 日志只能记录来源、手机号是否有效、脱敏手机号，不记录完整手机号。
+- [ ] `send_sms` 请求携带手机号来源标记；文件读取手机号模式下 CP 不传真实手机号，helper 使用自己读取并校验过的真实手机号；手动输入模式下 CP 只传用户输入手机号。
 - [ ] helper 对手机号再次执行格式校验，禁止只依赖 Credential Provider UI 校验；手机号非法时返回可展示错误且不调用真实短信 API。
+- [ ] helper 实现手机号文件读取和校验：读取 `PhoneFilePath`，校验 `^1[3-9]\d{9}$`，只向 CP 返回脱敏手机号和不可编辑标记，日志不得记录完整手机号。
 - [ ] helper 为每次 MFA 请求生成审计上下文 `AuditContext`：包含 request_id、session_id、client_ip、host_public_ip、host_private_ips、host_uuid 和认证方式。
 - [ ] helper 采集 RDP 连接用户 IP：优先按当前 Windows session 查询客户端地址；采集失败时填充 `unknown`，并记录脱敏诊断原因。
 - [ ] helper 采集本机内网 IP 列表：枚举活动网卡，过滤 loopback、link-local、未启用网卡和明显无效地址，支持多网卡多 IP。
@@ -143,9 +153,9 @@
 - [ ] 定义认证方式开关配置，例如 `EnablePhoneCodeMfa`、`EnableSecondPasswordMfa`、`EnableWechatMfa`，默认启用手机验证码和二次密码，微信在真实接入前默认关闭。
 - [ ] 定义认证超时配置，例如 `MfaTimeoutSeconds`，默认 120 秒，设置过小/非法时恢复默认值。
 - [ ] 定义手机号来源配置，例如 `PhoneSource=file|input`；默认建议为 `input`，避免文件缺失导致测试环境无法收验证码。
-- [ ] 定义手机号文件路径配置，例如 `PhoneFilePath=C:\ProgramData\rdp_auth\phone.txt`，仅在 `PhoneSource=file` 时生效。
+- [ ] 定义手机号文件路径配置，例如 `PhoneFilePath=C:\ProgramData\rdp_auth\phone.txt`，仅在 `PhoneSource=file` 时由 helper 读取，Credential Provider 不直接打开该文件。
 - [ ] `auth_core` 提供手机号校验和脱敏函数：合法手机号按 `138****8888` 格式展示，非法手机号不暴露前后缀。
-- [ ] `auth_config` 在文件读取模式下读取真实手机号并校验；文件缺失、为空或格式非法时 fail closed，不允许发送短信，并记录脱敏诊断原因。
+- [ ] `auth_config` 只定义手机号来源、路径、优先级和错误类型；真实手机号文件读取、校验和 fail closed 决策由 helper 执行。
 - [ ] 定义公网 IP 查询配置，例如 `PublicIpEndpoint`、`PublicIpTimeoutSeconds`、`RequirePublicIpForSms`，默认公网 IP 获取失败不阻断短信。
 - [ ] 定义 IP 审计日志策略，例如 `AuditIpLogging=full|masked|off`，区分诊断日志和审计日志对 IP 字段的记录方式。
 - [ ] 定义远程配置缓存路径，例如 `C:\ProgramData\rdp_auth\config\remote_policy.json`，并定义版本号、更新时间、TTL 和完整性校验字段。
@@ -155,13 +165,11 @@
 - [ ] 新增 `AuthMethodPolicy` 或等效结构，统一表达哪些认证方式可展示、可提交。
 - [ ] 配置中关闭的认证方式必须同时影响 UI 展示和提交校验，避免通过手工构造字段值提交已禁用方式。
 - [ ] 当配置文件把所有认证方式都关闭时，自动回退到默认认证方式集合，并记录脱敏诊断信息。
-- [ ] 读取 `hostuuid`。
-- [ ] 读取 `serveraddr`。
-- [ ] 读取 `ClientIp`。
-- [ ] 读取 `r_ip_range`。
-- [ ] 读取 `r_time_range`。
-- [ ] 读取 `r_region`。
-- [ ] 支持读取 `reginfo.ini`，并明确优先级。
+- [ ] helper 读取 `hostuuid` 并放入策略快照和审计上下文，Credential Provider 不直接读取。
+- [ ] helper 读取 `serveraddr` 并用于 API base URL 或远程配置拉取，Credential Provider 不直接读取。
+- [ ] `ClientIp` 不再作为静态配置优先来源；helper 应优先从当前 RDP session 动态采集，配置值仅作为采集失败时的显式 fallback。
+- [ ] helper 读取 `r_ip_range`、`r_time_range`、`r_region` 等策略配置并在本地或服务端策略判断中使用，CP 只接收最终允许/拒绝或可展示策略。
+- [ ] helper 支持读取 `reginfo.ini`，并明确其与注册表、本地配置文件、远程配置缓存的优先级；CP 不直接读取 `reginfo.ini`。
 - [ ] 配置缺失时返回结构化错误。
 - [ ] 认证方式配置缺失或非法时使用安全默认值；全部关闭时恢复默认认证方式集合。
 - [ ] helper 启动时输出脱敏诊断日志。
@@ -238,8 +246,9 @@
 - [ ] 单元测试：认证超时配置解析与默认值。
 - [ ] 单元测试：手机号校验规则，合法手机号满足 `^1[3-9]\d{9}$`，非法手机号被拒绝。
 - [ ] 单元测试：手机号脱敏规则，`13812348888` 显示为 `138****8888`，非法手机号显示为安全占位文案。
-- [ ] 单元测试：文件读取手机号模式会禁用手机号输入框，并且 UI 只显示脱敏手机号。
+- [ ] 单元测试：helper 文件读取手机号模式会让 CP 禁用手机号输入框，并且 UI 只显示脱敏手机号。
 - [ ] 单元测试：手动输入手机号模式下，手机号不合法时禁止发送验证码并显示错误提示。
+- [ ] 单元测试：`get_policy_snapshot` 不包含文件模式真实手机号，只包含脱敏手机号、字段可编辑状态和策略来源。
 - [ ] 单元测试：本机内网 IP 枚举会过滤 loopback、link-local、未启用网卡，并保留多网卡有效地址。
 - [ ] 单元测试：公网 IP 获取失败时按策略返回 `unknown` 或 fail closed。
 - [ ] 单元测试：审计日志字段序列化包含 client_ip、host_public_ip、host_private_ips、host_uuid、session_id，且不包含手机号、验证码、密码、token。
@@ -260,7 +269,7 @@
 - [ ] 集成测试：`send_sms` 请求会携带 host_public_ip，并在公网 IP 获取失败时按策略降级。
 - [ ] 集成测试：远程配置拉取、缓存、周期刷新和失败回退。
 - [ ] 集成测试：CP 调 helper 超时。
-- [x] VM 测试：RDP + NLA + 正确凭证 + MFA 成功。（当前为 pass-through 验证，真实 MFA 接入后需复测）
+- [x] VM 测试：RDP + NLA + 正确凭证 + mock MFA 成功，Kerberos interactive packed serialization 已验证进入桌面；真实 MFA 接入后需复测。
 - [ ] VM 测试：RDP + NLA + 正确凭证 + MFA 失败。
 - [ ] VM 测试：RDP 未传入 serialization 的降级提示。
 - [ ] VM 测试：RDP 用户注销后返回登录界面时，若没有新的 inbound serialization，应断开 RDP 连接而不是停留在孤立 MFA 入口。
@@ -273,6 +282,7 @@
 - [ ] Windows 密码和 RDP 原始凭证 serialization 不写日志。
 - [ ] 验证码、二次密码、token 不写日志。
 - [ ] 手机号必须按脱敏格式写入 UI、诊断日志和 API 日志；禁止记录配置文件中的完整手机号。
+- [ ] 文件模式真实手机号只能由 helper 读取并短暂保存在内存中；Credential Provider、诊断日志、策略快照和远程配置缓存不得保存完整手机号。
 - [ ] client_ip、host_public_ip、host_private_ips 作为审计字段管理；诊断日志是否记录完整 IP 必须受配置控制。
 - [ ] 远程配置必须校验来源和完整性，至少包含版本号、更新时间、TTL 和签名或 HMAC；校验失败不得生效。
 - [ ] 远程配置下发不得绕过 MFA、不得关闭所有认证方式、不得禁用 fail closed 安全默认值。
