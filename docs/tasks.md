@@ -209,7 +209,12 @@
 ## 阶段 6：配置读取
 
 - [x] 确定配置集中化方案，详见 `docs/configuration.md`：本地人工维护配置使用 TOML，远程配置缓存可使用 JSON，注册表只保留最小引导项和应急开关。
-- [x] 配置采用单一文件为主，推荐路径为 `C:\ProgramData\rdp_auth\config\rdp_auth.toml`，格式优先选择 TOML；如服务端下发天然是 JSON，可在远程缓存层保留 JSON，但本地人工维护配置仍以 TOML 为主。
+- [x] 配置采用单一文件为主，运行期推荐加密路径为 `C:\ProgramData\rdp_auth\config\rdp_auth.toml.enc`，TOML 只作为导入/导出的明文交换格式；如服务端下发天然是 JSON，可在远程缓存层保留 JSON 内存格式，但远程缓存落盘也必须加密。
+- [ ] 所有业务配置文件必须加密落盘：本地统一配置、远程配置缓存、手机号文件、旧版 `reginfo.ini` 迁移结果和后续新增认证/API 配置都不得以明文作为运行期配置文件。
+- [ ] 将本地配置长期落盘路径调整为加密 envelope，例如 `C:\ProgramData\rdp_auth\config\rdp_auth.toml.enc`；TOML 仅作为导入/导出的明文交换格式。
+- [ ] 设计统一加密 envelope：包含魔数、schema version、算法标识、明文格式、创建时间、密文长度和密文，便于后续升级算法和兼容旧文件。
+- [ ] Windows 默认使用 DPAPI 机器级加密保护配置文件，优先调用 `CryptProtectData` / `CryptUnprotectData`；不得把密钥、API token 或手机号写入注册表。
+- [ ] Windows Server 2008 R2 兼容验证必须覆盖 DPAPI 机器级加密/解密；如果需要降级为本机密钥文件，必须先设计 ACL、轮换、备份和审计策略。
 - [ ] 注册表只保留 Windows 集成所必需的机器级信息：Provider/Filter COM 注册、LogonUI 枚举入口、DLL 路径、helper 路径、配置文件路径、`DisableMfa` 应急开关和必要的 `EnableRdpMfa` / `EnableConsoleMfa` 登录入口策略；认证方式、API、手机号、超时、审计、远程配置等业务配置不得散落写入注册表。
 - [ ] `auth_config` 读取注册表 `SOFTWARE\rdp_auth\config` 中的最小引导项，例如 `ConfigPath`、`HelperPath`、`DisableMfa`、`EnableRdpMfa`、`EnableConsoleMfa`，再读取统一配置文件。
 - [x] `register_tool install` 初始化统一配置文件，若文件已存在则不覆盖人工修改；注册表只写最小引导项和 Windows 必需注册项。
@@ -227,7 +232,7 @@
 - [ ] `auth_config` 只定义手机号来源、路径、优先级和错误类型；真实手机号文件读取、校验和 fail closed 决策由 helper 执行。
 - [ ] 定义公网 IP 查询配置，例如 `api.public_ip_endpoint`、`api.public_ip_timeout_seconds`、`api.require_public_ip_for_sms`，默认公网 IP 获取失败不阻断短信。
 - [ ] 定义 IP 审计日志策略，例如 `audit.ip_logging = "full" | "masked" | "off"`，区分诊断日志和审计日志对 IP 字段的记录方式。
-- [ ] 定义远程配置缓存路径，例如 `remote_config.cache_path = "C:\\ProgramData\\rdp_auth\\config\\remote_policy.json"`，并定义版本号、更新时间、TTL 和完整性校验字段。
+- [ ] 定义远程配置缓存路径，例如 `remote_config.cache_path = "C:\\ProgramData\\rdp_auth\\config\\remote_policy.json.enc"`，并定义版本号、更新时间、TTL 和完整性校验字段；远程缓存也必须加密落盘。
 - [ ] 支持远程配置下发：helper 启动时拉取配置，按 `remote_config.refresh_seconds` 周期刷新；拉取失败时使用最后一次有效配置，从未成功拉取时使用本地安全默认值。
 - [ ] 远程配置不得关闭所有认证方式或绕过 MFA；若下发非法策略，自动回退默认认证方式集合并记录审计告警。
 - [ ] 支持从统一配置文件读取认证方式开关，并明确优先级：应急注册表开关优先级最高，其次是经完整性校验的远程配置，最后是本地统一配置文件和内置安全默认值。
@@ -238,7 +243,12 @@
 - [ ] helper 读取 `serveraddr` 并用于 API base URL 或远程配置拉取，Credential Provider 不直接读取。
 - [ ] `ClientIp` 不再作为静态配置优先来源；helper 应优先从当前 RDP session 动态采集，配置值仅作为采集失败时的显式 fallback。
 - [ ] helper 读取 `r_ip_range`、`r_time_range`、`r_region` 等策略配置并在本地或服务端策略判断中使用，CP 只接收最终允许/拒绝或可展示策略。
-- [ ] helper 支持兼容读取旧版 `reginfo.ini`，只作为迁移来源或显式 fallback；成功迁移后写入统一配置文件，CP 不直接读取 `reginfo.ini`。
+- [ ] helper 支持兼容读取旧版 `reginfo.ini`，只作为迁移来源或显式 fallback；成功迁移后写入统一加密配置文件，CP 不直接读取 `reginfo.ini`。
+- [ ] `auth_config` 增加配置解密层：先读取 envelope 并解密为内存中的 TOML/JSON，再解析为结构化配置；明文只允许短暂存在于内存。
+- [ ] `auth_config` 对解密失败、机器不匹配、envelope 版本不支持、密文损坏分别返回结构化错误，并按 fail closed/安全默认值策略处理。
+- [ ] `register_tool config export` 导出明文 TOML 供管理员编辑，命令输出必须提示明文敏感和删除临时文件；导出操作需要管理员显式执行。
+- [ ] `register_tool config import` 读取明文 TOML 后立即加密写回 `.enc` 文件，已有加密配置写入前创建加密备份，不保留明文副本。
+- [ ] `register_tool health` 显示配置文件是否加密、envelope 版本、解密是否成功、配置来源和最后修改时间；不得显示配置明文内容。
 - [ ] 配置缺失时返回结构化错误。
 - [ ] 认证方式配置缺失或非法时使用安全默认值；全部关闭时恢复默认认证方式集合。
 - [ ] helper 启动时输出脱敏诊断日志。
@@ -302,6 +312,8 @@
 - [x] 初始化 `C:\ProgramData\rdp_auth` 目录。
 - [x] 初始化日志目录。
 - [ ] 初始化远程配置缓存目录，例如 `C:\ProgramData\rdp_auth\config`。
+- [ ] `register_tool install` 默认创建加密配置文件，不创建长期明文 TOML；如果发现旧明文配置，提示迁移或自动导入后加密。
+- [ ] `register_tool uninstall` 不默认删除加密配置文件和加密备份，避免误删管理员配置；如新增清理参数，必须明确提示风险。
 - [x] 提供健康检查命令。
 - [x] 提供应急禁用命令。
 - [x] 编写 VM 测试和恢复文档。
@@ -320,6 +332,10 @@
 - [x] 单元测试：统一配置文件中的认证超时配置解析与默认值。
 - [x] 单元测试：统一配置文件中的缺失 serialization 等待窗口和短信重新发送时间解析与默认值。
 - [x] 单元测试：统一配置文件中的 helper session 状态 TTL、首次登录等待窗口、已认证会话短等待窗口和 IPC 超时解析与默认值。
+- [ ] 单元测试：配置 envelope 加密后不包含 TOML/JSON 明文字段，例如 `serveraddr`、`hostuuid`、手机号或 API 地址。
+- [ ] 单元测试：配置 envelope 解密成功后能恢复原始 TOML/JSON 并解析为结构化配置。
+- [ ] 单元测试：错误密文、错误 magic、未知 envelope 版本、截断文件和机器不匹配时返回结构化错误且不泄漏明文。
+- [ ] 单元测试：`register_tool config import/export` 能完成明文 TOML 与加密配置的转换，导入不会覆盖失败前的有效加密配置。
 - [ ] 单元测试：缺失 serialization 保护 generation 变化后旧定时器不会断开新登录尝试。
 - [ ] 单元测试：短信倒计时 generation 变化后旧刷新线程不会覆盖新倒计时。
 - [ ] 单元测试：helper `SessionAuthState` 标记、查询、TTL 过期和清理逻辑。
@@ -352,6 +368,7 @@
 - [ ] 集成测试：helper 不可用或 IPC 超时时，Credential Provider 回退 fail closed，不放行且不长时间阻塞 LogonUI。
 - [ ] 集成测试：`send_sms` 请求会携带 host_public_ip，并在公网 IP 获取失败时按策略降级。
 - [ ] 集成测试：远程配置拉取、缓存、周期刷新和失败回退。
+- [ ] 集成测试：远程配置缓存以 `.enc` 加密文件落盘，helper 重启后可解密加载最后一次有效配置。
 - [ ] 集成测试：CP 调 helper 超时。
 - [x] VM 测试：RDP + NLA + 正确凭证 + mock MFA 成功，Kerberos interactive packed serialization 已验证进入桌面；真实 MFA 接入后需复测。
 - [ ] VM 测试：RDP + NLA + 正确凭证 + MFA 失败。
@@ -363,6 +380,7 @@
 - [ ] VM 测试：helper 重启后内存状态丢失时，系统仍按首次登录等待窗口处理，不得放行孤立 MFA。
 - [ ] VM 测试：session logoff/disconnect 后 helper 清理状态，后续新 session 不得复用旧认证标记。
 - [ ] VM 测试：短信按钮点击后逐秒更新 `重新发送(n)`，归零后恢复 `发送验证码` 并可再次点击。
+- [ ] VM 测试：Windows Server 2008 R2 上 DPAPI 机器级加密配置可由安装工具写入、helper 读取，并能在重启后继续解密。
 - [ ] VM 测试：服务端不可达时默认拒绝登录。
 - [x] VM 测试：系统默认 Provider 未隐藏时可恢复登录。
 - [x] VM 测试：Filter 启用后无法绕过 MFA。（当前验证为无法绕过 Provider，真实 MFA 接入后需复测）
@@ -376,6 +394,10 @@
 - [ ] client_ip、host_public_ip、host_private_ips 作为审计字段管理；诊断日志是否记录完整 IP 必须受配置控制。
 - [ ] 远程配置必须校验来源和完整性，至少包含版本号、更新时间、TTL 和签名或 HMAC；校验失败不得生效。
 - [ ] 远程配置下发不得绕过 MFA、不得关闭所有认证方式、不得禁用 fail closed 安全默认值。
+- [ ] 所有业务配置文件必须加密落盘；包括本地统一配置、远程配置缓存、手机号文件、旧版配置迁移结果和后续新增配置文件。
+- [ ] 配置加密密钥不得写入注册表、日志、配置文件或 IPC 响应；默认使用 Windows DPAPI 机器级保护。
+- [ ] 配置导入/导出的明文文件只用于管理员维护，不作为运行期配置来源；工具必须提示明文风险，导入成功后运行期只读取加密文件。
+- [ ] `health` 和诊断日志只允许记录配置文件路径、加密状态、版本、修改时间和错误码，不得记录解密后的配置内容。
 - [x] Credential Provider 诊断日志只记录阶段、PID、session、Provider GUID、serialization 长度和错误码，写入失败不影响 LogonUI。
 - [ ] 所有 `tracing` 字段必须先经过脱敏策略评审，禁止直接使用 `?struct` 或 `%struct` 记录包含敏感字段的结构体。
 - [ ] 所有 `anyhow::Context` 文案不得拼接敏感值；需要排查时使用脱敏 ID、长度、哈希前缀或内部错误码。
