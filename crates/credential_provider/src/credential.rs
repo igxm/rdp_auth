@@ -26,7 +26,6 @@ use crate::memory::alloc_wide_string;
 use crate::session::disconnect_current_session;
 use crate::state::{CredentialProviderState, RDP_MFA_PROVIDER_CLSID};
 
-const AUTH_METHOD_LABELS: [&str; 3] = ["手机验证码", "二次密码", "微信扫码（预留）"];
 const MOCK_SMS_CODE: &str = "123456";
 const MOCK_SECOND_PASSWORD: &str = "mock-password";
 
@@ -277,9 +276,9 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
 
         let state = self.state.lock().expect("credential state poisoned");
         unsafe {
-            // SAFETY: 两个输出指针已做非空检查，组合框固定提供三种认证方式。
-            *_items = AUTH_METHOD_LABELS.len() as u32;
-            *_selected_item = auth_method_index(state.selected_method);
+            // SAFETY: 两个输出指针已做非空检查；认证方式列表来自归一化后的配置，至少有一个安全默认项。
+            *_items = state.available_auth_methods.len() as u32;
+            *_selected_item = auth_method_selected_index(&state);
         }
         Ok(())
     }
@@ -288,10 +287,11 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
         if field_id != MfaField::AuthMethod as u32 {
             return Err(Error::from_hresult(E_INVALIDARG));
         }
-        let Some(label) = AUTH_METHOD_LABELS.get(item as usize) else {
+        let state = self.state.lock().expect("credential state poisoned");
+        let Some(method) = state.available_auth_methods.get(item as usize).copied() else {
             return Err(Error::from_hresult(E_INVALIDARG));
         };
-        alloc_wide_string(label)
+        alloc_wide_string(auth_method_label(method))
     }
 
     fn SetStringValue(&self, field_id: u32, value: &PCWSTR) -> Result<()> {
@@ -339,7 +339,16 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
         if field_id != MfaField::AuthMethod as u32 {
             return Err(Error::from_hresult(E_INVALIDARG));
         }
-        let Some(method) = auth_method_from_index(selected_item) else {
+        let state_snapshot = self
+            .state
+            .lock()
+            .expect("credential state poisoned")
+            .clone();
+        let Some(method) = state_snapshot
+            .available_auth_methods
+            .get(selected_item as usize)
+            .copied()
+        else {
             return Err(Error::from_hresult(E_INVALIDARG));
         };
 
@@ -588,6 +597,7 @@ fn field_visibility(
     }
 }
 
+#[cfg(test)]
 fn auth_method_index(method: AuthMethod) -> u32 {
     match method {
         AuthMethod::PhoneCode => 0,
@@ -596,17 +606,20 @@ fn auth_method_index(method: AuthMethod) -> u32 {
     }
 }
 
-fn auth_method_from_index(index: u32) -> Option<AuthMethod> {
-    match index {
-        0 => Some(AuthMethod::PhoneCode),
-        1 => Some(AuthMethod::SecondPassword),
-        2 => Some(AuthMethod::Wechat),
-        _ => None,
-    }
+fn auth_method_selected_index(state: &CredentialProviderState) -> u32 {
+    state
+        .available_auth_methods
+        .iter()
+        .position(|method| *method == state.selected_method)
+        .unwrap_or(0) as u32
 }
 
 fn auth_method_label(method: AuthMethod) -> &'static str {
-    AUTH_METHOD_LABELS[auth_method_index(method) as usize]
+    match method {
+        AuthMethod::PhoneCode => "手机验证码",
+        AuthMethod::SecondPassword => "二次密码",
+        AuthMethod::Wechat => "微信扫码（预留）",
+    }
 }
 
 fn status_text(state: &CredentialProviderState) -> &str {
@@ -617,6 +630,14 @@ fn status_text(state: &CredentialProviderState) -> &str {
 }
 
 fn verify_mock_mfa(state: &mut CredentialProviderState) -> std::result::Result<(), &'static str> {
+    if !state
+        .available_auth_methods
+        .contains(&state.selected_method)
+    {
+        state.mfa_state = MfaState::Failed("当前认证方式已被配置禁用".to_owned());
+        state.status_message = "当前认证方式已被配置禁用".to_owned();
+        return Err("当前认证方式已被配置禁用");
+    }
     state.mfa_state = MfaState::Verifying;
     let result = match state.selected_method {
         AuthMethod::PhoneCode => {
@@ -684,7 +705,7 @@ fn wide_null(value: &str) -> Vec<u16> {
 mod tests {
     use super::{MOCK_SECOND_PASSWORD, MOCK_SMS_CODE, verify_mock_mfa};
     use super::{
-        auth_method_from_index, auth_method_index, field_visibility, send_sms_label_owned,
+        auth_method_index, auth_method_selected_index, field_visibility, send_sms_label_owned,
     };
     use crate::fields::MfaField;
     use crate::state::CredentialProviderState;
@@ -696,10 +717,15 @@ mod tests {
         assert_eq!(auth_method_index(AuthMethod::PhoneCode), 0);
         assert_eq!(auth_method_index(AuthMethod::SecondPassword), 1);
         assert_eq!(auth_method_index(AuthMethod::Wechat), 2);
-        assert_eq!(auth_method_from_index(0), Some(AuthMethod::PhoneCode));
-        assert_eq!(auth_method_from_index(1), Some(AuthMethod::SecondPassword));
-        assert_eq!(auth_method_from_index(2), Some(AuthMethod::Wechat));
-        assert_eq!(auth_method_from_index(3), None);
+    }
+
+    #[test]
+    fn selected_index_uses_configured_method_order() {
+        let mut state = CredentialProviderState::default();
+        state.available_auth_methods = vec![AuthMethod::SecondPassword];
+        state.selected_method = AuthMethod::SecondPassword;
+
+        assert_eq!(auth_method_selected_index(&state), 0);
     }
 
     #[test]
@@ -778,5 +804,17 @@ mod tests {
 
         assert!(verify_mock_mfa(&mut state).is_err());
         assert!(matches!(state.mfa_state, MfaState::Failed(_)));
+    }
+
+    #[test]
+    fn mock_verification_rejects_disabled_method() {
+        let mut state = CredentialProviderState::default();
+        state.available_auth_methods = vec![AuthMethod::SecondPassword];
+        state.selected_method = AuthMethod::PhoneCode;
+        state.phone = "13800138000".to_owned();
+        state.sms_code = MOCK_SMS_CODE.to_owned();
+
+        assert!(verify_mock_mfa(&mut state).is_err());
+        assert_eq!(state.status_message, "当前认证方式已被配置禁用");
     }
 }

@@ -5,6 +5,7 @@
 
 use std::fmt;
 
+use auth_core::AuthMethod;
 use serde::{Deserialize, Serialize};
 
 /// 统一业务配置。当前先落地 MFA 相关参数，后续 helper/API/远程配置继续扩展此结构。
@@ -13,14 +14,20 @@ pub struct AppConfig {
     #[serde(default = "default_schema_version")]
     pub schema_version: u32,
     #[serde(default)]
+    pub auth_methods: AuthMethodsConfig,
+    #[serde(default)]
     pub mfa: MfaConfig,
+    #[serde(default)]
+    pub phone: PhoneConfig,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             schema_version: default_schema_version(),
+            auth_methods: AuthMethodsConfig::default(),
             mfa: MfaConfig::default(),
+            phone: PhoneConfig::default(),
         }
     }
 }
@@ -28,7 +35,108 @@ impl Default for AppConfig {
 impl AppConfig {
     pub fn normalized(mut self) -> Self {
         self.schema_version = default_schema_version();
+        self.auth_methods = self.auth_methods.normalized();
         self.mfa = self.mfa.normalized();
+        self.phone = self.phone.normalized();
+        self
+    }
+}
+
+/// 认证方式开关配置。
+///
+/// 所有方式都关闭时必须回退到安全默认集合，不能因为配置错误让 MFA UI 没有可选项。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthMethodsConfig {
+    #[serde(default = "default_auth_phone_code")]
+    pub phone_code: bool,
+    #[serde(default = "default_auth_second_password")]
+    pub second_password: bool,
+    #[serde(default = "default_auth_wechat")]
+    pub wechat: bool,
+}
+
+impl Default for AuthMethodsConfig {
+    fn default() -> Self {
+        Self {
+            phone_code: default_auth_phone_code(),
+            second_password: default_auth_second_password(),
+            wechat: default_auth_wechat(),
+        }
+    }
+}
+
+impl AuthMethodsConfig {
+    fn normalized(self) -> Self {
+        if self.phone_code || self.second_password || self.wechat {
+            self
+        } else {
+            Self::default()
+        }
+    }
+
+    pub fn enabled_methods(&self) -> Vec<AuthMethod> {
+        let mut methods = Vec::new();
+        if self.phone_code {
+            methods.push(AuthMethod::PhoneCode);
+        }
+        if self.second_password {
+            methods.push(AuthMethod::SecondPassword);
+        }
+        if self.wechat {
+            methods.push(AuthMethod::Wechat);
+        }
+        if methods.is_empty() {
+            methods.extend(AuthMethod::DEFAULT_METHODS);
+        }
+        methods
+    }
+}
+
+/// 手机号来源。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PhoneSource {
+    /// 用户在 CP UI 中手动输入手机号。
+    Input,
+    /// helper 从配置文件指定路径读取真实手机号，CP 只接收脱敏展示值。
+    File,
+}
+
+impl Default for PhoneSource {
+    fn default() -> Self {
+        Self::Input
+    }
+}
+
+/// 手机号策略配置。真实文件读取放在 helper，CP 不直接打开手机号文件。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PhoneConfig {
+    #[serde(default)]
+    pub source: PhoneSource,
+    #[serde(default = "default_phone_file_path")]
+    pub file_path: String,
+    #[serde(default = "default_phone_validation_pattern")]
+    pub validation_pattern: String,
+}
+
+impl Default for PhoneConfig {
+    fn default() -> Self {
+        Self {
+            source: PhoneSource::default(),
+            file_path: default_phone_file_path(),
+            validation_pattern: default_phone_validation_pattern(),
+        }
+    }
+}
+
+impl PhoneConfig {
+    fn normalized(mut self) -> Self {
+        if self.file_path.trim().is_empty() {
+            self.file_path = default_phone_file_path();
+        }
+        if self.validation_pattern.trim().is_empty() {
+            self.validation_pattern = default_phone_validation_pattern();
+        }
         self
     }
 }
@@ -164,6 +272,26 @@ fn default_schema_version() -> u32 {
     1
 }
 
+fn default_auth_phone_code() -> bool {
+    true
+}
+
+fn default_auth_second_password() -> bool {
+    true
+}
+
+fn default_auth_wechat() -> bool {
+    false
+}
+
+fn default_phone_file_path() -> String {
+    r"C:\ProgramData\rdp_auth\phone.txt".to_owned()
+}
+
+fn default_phone_validation_pattern() -> String {
+    r"^1[3-9]\d{9}$".to_owned()
+}
+
 fn default_mfa_timeout_seconds() -> u64 {
     120
 }
@@ -214,7 +342,8 @@ fn bounded_u32(value: u32, min: u32, max: u32, default_value: u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{AppConfig, MfaConfig};
+    use super::{AppConfig, AuthMethodsConfig, MfaConfig, PhoneSource};
+    use auth_core::AuthMethod;
 
     #[test]
     fn partial_toml_uses_defaults() {
@@ -233,12 +362,18 @@ timeout_seconds = 180
         assert_eq!(config.mfa.timeout_seconds, 180);
         assert_eq!(config.mfa.missing_serialization_grace_seconds, 1);
         assert_eq!(config.mfa.sms_resend_seconds, 60);
+        assert_eq!(
+            config.auth_methods.enabled_methods(),
+            vec![AuthMethod::PhoneCode, AuthMethod::SecondPassword]
+        );
+        assert_eq!(config.phone.source, PhoneSource::Input);
     }
 
     #[test]
     fn invalid_ranges_fall_back_to_safe_defaults() {
         let config = AppConfig {
             schema_version: 1,
+            auth_methods: AuthMethodsConfig::default(),
             mfa: MfaConfig {
                 timeout_seconds: 1,
                 missing_serialization_grace_seconds: 0,
@@ -249,9 +384,71 @@ timeout_seconds = 180
                 initial_login_grace_seconds: 0,
                 disconnect_when_missing_serialization: true,
             },
+            phone: Default::default(),
         }
         .normalized();
 
         assert_eq!(config.mfa, MfaConfig::default());
+    }
+
+    #[test]
+    fn auth_methods_parse_and_disable_hidden_methods() {
+        let config: AppConfig = toml::from_str(
+            r#"
+schema_version = 1
+
+[auth_methods]
+phone_code = false
+second_password = true
+wechat = false
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.normalized().auth_methods.enabled_methods(),
+            vec![AuthMethod::SecondPassword]
+        );
+    }
+
+    #[test]
+    fn all_auth_methods_disabled_falls_back_to_safe_defaults() {
+        let config = AppConfig {
+            schema_version: 1,
+            auth_methods: AuthMethodsConfig {
+                phone_code: false,
+                second_password: false,
+                wechat: false,
+            },
+            mfa: MfaConfig::default(),
+            phone: Default::default(),
+        }
+        .normalized();
+
+        assert_eq!(
+            config.auth_methods.enabled_methods(),
+            vec![AuthMethod::PhoneCode, AuthMethod::SecondPassword]
+        );
+    }
+
+    #[test]
+    fn phone_config_parses_file_source_and_defaults_empty_fields() {
+        let config: AppConfig = toml::from_str(
+            r#"
+schema_version = 1
+
+[phone]
+source = "file"
+file_path = ""
+validation_pattern = ""
+"#,
+        )
+        .unwrap();
+
+        let config = config.normalized();
+
+        assert_eq!(config.phone.source, PhoneSource::File);
+        assert!(config.phone.file_path.ends_with(r"rdp_auth\phone.txt"));
+        assert_eq!(config.phone.validation_pattern, r"^1[3-9]\d{9}$");
     }
 }

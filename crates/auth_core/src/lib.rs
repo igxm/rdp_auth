@@ -15,6 +15,30 @@ pub enum AuthMethod {
     Wechat,
 }
 
+impl AuthMethod {
+    pub const DEFAULT_METHODS: [Self; 2] = [Self::PhoneCode, Self::SecondPassword];
+}
+
+/// 校验当前默认的中国大陆手机号格式。
+///
+/// 这里故意不用正则库，避免为了一个固定规则增加运行期依赖；后续 helper 支持
+/// `phone.validation_pattern` 时，可以在 helper 层使用可配置正则。
+pub fn is_valid_default_phone_number(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 11
+        && bytes[0] == b'1'
+        && matches!(bytes[1], b'3'..=b'9')
+        && bytes.iter().all(u8::is_ascii_digit)
+}
+
+/// 返回可展示的脱敏手机号，非法输入统一返回安全占位，避免泄漏前后缀。
+pub fn mask_phone_number(value: &str) -> String {
+    if !is_valid_default_phone_number(value) {
+        return "手机号不可用".to_owned();
+    }
+    format!("{}****{}", &value[..3], &value[7..])
+}
+
 /// Credential Provider 内部使用的二次认证状态。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MfaState {
@@ -54,12 +78,26 @@ pub enum AuthError {
 
 #[cfg(test)]
 mod tests {
-    use super::MfaState;
+    use super::{MfaState, is_valid_default_phone_number, mask_phone_number};
 
     #[test]
     fn only_verified_state_allows_serialization() {
         assert!(MfaState::Verified.allows_serialization());
         assert!(!MfaState::Idle.allows_serialization());
         assert!(!MfaState::Failed("验证码错误".to_owned()).allows_serialization());
+    }
+
+    #[test]
+    fn validates_default_phone_number_rule() {
+        assert!(is_valid_default_phone_number("13812348888"));
+        assert!(!is_valid_default_phone_number("12812348888"));
+        assert!(!is_valid_default_phone_number("1381234888"));
+        assert!(!is_valid_default_phone_number("1381234888x"));
+    }
+
+    #[test]
+    fn masks_valid_phone_and_hides_invalid_phone() {
+        assert_eq!(mask_phone_number("13812348888"), "138****8888");
+        assert_eq!(mask_phone_number("bad"), "手机号不可用");
     }
 }

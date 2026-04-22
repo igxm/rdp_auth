@@ -153,6 +153,8 @@ pub struct CredentialProviderState {
     pub usage_scenario: CREDENTIAL_PROVIDER_USAGE_SCENARIO,
     /// 当前选择的二次认证方式。UI 通过组合框切换，后续 helper 会按这个值路由请求。
     pub selected_method: AuthMethod,
+    /// 当前配置允许展示和提交的认证方式。全部关闭时由 auth_config 回退到安全默认集合。
+    pub available_auth_methods: Vec<AuthMethod>,
     /// 手机号输入值。Credential Provider 进程内只短暂保存 UI 内容，不写日志。
     pub phone: String,
     /// 短信验证码输入值。验证码属于敏感内容，只能保存在内存状态中。
@@ -182,6 +184,11 @@ impl Default for CredentialProviderState {
     fn default() -> Self {
         let app_config = load_app_config();
         let mfa_config = app_config.mfa;
+        let available_auth_methods = app_config.auth_methods.enabled_methods();
+        let selected_method = available_auth_methods
+            .first()
+            .copied()
+            .unwrap_or(AuthMethod::PhoneCode);
         Self {
             mfa_state: MfaState::Idle,
             has_inbound_serialization: false,
@@ -189,7 +196,8 @@ impl Default for CredentialProviderState {
             remote_logon_credential: None,
             allow_passthrough_without_mfa: false,
             usage_scenario: CPUS_LOGON,
-            selected_method: AuthMethod::PhoneCode,
+            selected_method,
+            available_auth_methods,
             phone: String::new(),
             sms_code: String::new(),
             second_password: String::new(),
@@ -207,6 +215,8 @@ impl Default for CredentialProviderState {
 
 #[cfg(test)]
 mod tests {
+    use auth_core::AuthMethod;
+
     use super::{
         CredentialProviderState, RDP_MFA_PROVIDER_CLSID, remember_remote_source_provider,
         take_remote_source_provider, write_remote_source_provider_handoff,
@@ -242,6 +252,10 @@ mod tests {
         assert!(state.disconnect_when_missing_serialization);
         assert_eq!(state.timeout_generation, 0);
         assert_eq!(state.sms_resend_generation, 0);
+        assert_eq!(
+            state.available_auth_methods,
+            vec![AuthMethod::PhoneCode, AuthMethod::SecondPassword]
+        );
     }
 
     #[test]
