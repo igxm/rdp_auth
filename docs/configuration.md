@@ -46,6 +46,13 @@ wechat = false
 
 [mfa]
 timeout_seconds = 120
+missing_serialization_grace_seconds = 1
+sms_resend_seconds = 60
+disconnect_when_missing_serialization = true
+helper_ipc_timeout_ms = 300
+session_state_ttl_seconds = 86400
+authenticated_session_short_grace_seconds = 1
+initial_login_grace_seconds = 5
 fail_closed = true
 
 [phone]

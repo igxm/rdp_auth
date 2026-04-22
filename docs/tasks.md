@@ -69,7 +69,7 @@
 - [ ] helper 通过 Windows session notification 监听 session lock、unlock、disconnect、logoff 等事件，维护 session 内存状态并及时清理，Credential Provider 不直接监听 Win+L 事件。
 - [ ] 如果 helper 不可用或 IPC 超时，Credential Provider 不得因此放行；回退到现有缺失 serialization 等待窗口和 fail closed 断开策略。
 - [ ] 缺失 serialization 保护按上下文使用不同等待窗口：已有成功会话返回 LogonUI 时使用短窗口，疑似首次登录时使用较宽松窗口，避免误断正常 RDP 登录。
-- [ ] 将缺失 serialization 等待窗口改为统一配置项，例如 `mfa.missing_serialization_grace_seconds`，缺失或非法时使用安全默认值。
+- [x] 将缺失 serialization 等待窗口改为统一配置项，例如 `mfa.missing_serialization_grace_seconds`，缺失或非法时使用安全默认值。
 - [ ] 日志补齐场景链路：记录 `SetUsageScenario`、`Filter`、`UpdateRemoteCredential`、`GetCredentialCount`、`GetCredentialAt`、`SetSerialization`、`MissingSerialization`、`MfaTimeout`、`GetSerialization`、`ReportResult` 的关键脱敏字段。
 - [ ] VM 验证 Windows 10/Server 版本上 `CPUS_LOGON` 与 `CPUS_UNLOCK_WORKSTATION` 的实际调用差异，避免把锁屏逻辑写死到单一 usage scenario。
 
@@ -161,7 +161,7 @@
 - [x] 发送验证码后立即把按钮切换为禁用态，并显示 `重新发送(60)`。
 - [x] 实现短信验证码重新发送倒计时递减，并在 60 秒后恢复为可点击 `发送验证码`。（当前通过 LogonUI events 只刷新发送短信按钮；后续接入 helper 后可改为 helper 心跳驱动）
 - [x] 增加认证超时断开机制：收到 RDP inbound serialization 后启动默认 2 分钟的一次性定时器，超时仍未完成二次认证时自动断开当前 RDP 会话。
-- [ ] 认证超时断开时间后续改为从统一配置文件读取，缺失时默认 120 秒。
+- [x] 认证超时断开时间后续改为从统一配置文件读取，缺失时默认 120 秒。
 - [x] 设计 `MfaState` 状态机：空闲、发送短信中、等待输入、认证中、成功、失败。
 - [x] 使用 mock 数据模拟认证通过情况：手机验证码 `123456`、二次密码 `mock-password`。
 - [x] 二次认证未通过时，`GetSerialization` 不返回原始凭证。
@@ -209,18 +209,18 @@
 ## 阶段 6：配置读取
 
 - [x] 确定配置集中化方案，详见 `docs/configuration.md`：本地人工维护配置使用 TOML，远程配置缓存可使用 JSON，注册表只保留最小引导项和应急开关。
-- [ ] 配置采用单一文件为主，推荐路径为 `C:\ProgramData\rdp_auth\config\rdp_auth.toml`，格式优先选择 TOML；如服务端下发天然是 JSON，可在远程缓存层保留 JSON，但本地人工维护配置仍以 TOML 为主。
+- [x] 配置采用单一文件为主，推荐路径为 `C:\ProgramData\rdp_auth\config\rdp_auth.toml`，格式优先选择 TOML；如服务端下发天然是 JSON，可在远程缓存层保留 JSON，但本地人工维护配置仍以 TOML 为主。
 - [ ] 注册表只保留 Windows 集成所必需的机器级信息：Provider/Filter COM 注册、LogonUI 枚举入口、DLL 路径、helper 路径、配置文件路径、`DisableMfa` 应急开关和必要的 `EnableRdpMfa` / `EnableConsoleMfa` 登录入口策略；认证方式、API、手机号、超时、审计、远程配置等业务配置不得散落写入注册表。
 - [ ] `auth_config` 读取注册表 `SOFTWARE\rdp_auth\config` 中的最小引导项，例如 `ConfigPath`、`HelperPath`、`DisableMfa`、`EnableRdpMfa`、`EnableConsoleMfa`，再读取统一配置文件。
-- [ ] `register_tool install` 初始化统一配置文件，若文件已存在则不覆盖人工修改；注册表只写最小引导项和 Windows 必需注册项。
+- [x] `register_tool install` 初始化统一配置文件，若文件已存在则不覆盖人工修改；注册表只写最小引导项和 Windows 必需注册项。
 - [ ] 定义统一配置 schema，至少包含 `[auth_methods]`、`[mfa]`、`[phone]`、`[api]`、`[audit]`、`[remote_config]`、`[logging]` 七组配置，并提供版本字段 `schema_version`。
 - [ ] 定义认证方式开关配置，例如 `auth_methods.phone_code`、`auth_methods.second_password`、`auth_methods.wechat`，默认启用手机验证码和二次密码，微信在真实接入前默认关闭。
-- [ ] 定义认证超时配置，例如 `mfa.timeout_seconds`，默认 120 秒，设置过小/非法时恢复默认值。
-- [ ] 定义缺失 RDP 原始凭证保护配置，例如 `mfa.missing_serialization_grace_seconds`，默认先按 VM 结果确定为 1 到 5 秒之间，设置过小/非法时恢复安全默认值。
-- [ ] 定义短信重新发送配置，例如 `mfa.sms_resend_seconds`，默认 60 秒；helper/API 接入后优先使用服务端返回的限流时间。
-- [ ] 定义 RDP 断开策略配置，例如 `mfa.disconnect_when_missing_serialization = true`，应急关闭时必须记录脱敏诊断日志并保持 fail closed，不得绕过 MFA。
-- [ ] 定义 helper session 状态配置，例如 `mfa.session_state_ttl_seconds`、`mfa.authenticated_session_short_grace_seconds`、`mfa.initial_login_grace_seconds`，用于区分已认证会话返回 LogonUI 和首次登录等待 serialization。
-- [ ] 定义 helper IPC 超时配置，例如 `mfa.helper_ipc_timeout_ms`，默认应足够短，避免 LogonUI 被 helper 卡住。
+- [x] 定义认证超时配置，例如 `mfa.timeout_seconds`，默认 120 秒，设置过小/非法时恢复默认值。
+- [x] 定义缺失 RDP 原始凭证保护配置，例如 `mfa.missing_serialization_grace_seconds`，默认先按 VM 结果确定为 1 到 5 秒之间，设置过小/非法时恢复安全默认值。
+- [x] 定义短信重新发送配置，例如 `mfa.sms_resend_seconds`，默认 60 秒；helper/API 接入后优先使用服务端返回的限流时间。
+- [x] 定义 RDP 断开策略配置，例如 `mfa.disconnect_when_missing_serialization = true`，应急关闭时必须记录脱敏诊断日志并保持 fail closed，不得绕过 MFA。
+- [x] 定义 helper session 状态配置，例如 `mfa.session_state_ttl_seconds`、`mfa.authenticated_session_short_grace_seconds`、`mfa.initial_login_grace_seconds`，用于区分已认证会话返回 LogonUI 和首次登录等待 serialization。
+- [x] 定义 helper IPC 超时配置，例如 `mfa.helper_ipc_timeout_ms`，默认应足够短，避免 LogonUI 被 helper 卡住。
 - [ ] 定义手机号来源配置，例如 `phone.source = "file" | "input"`；默认建议为 `input`，避免文件缺失导致测试环境无法收验证码。
 - [ ] 定义手机号文件路径配置，例如 `phone.file_path = "C:\\ProgramData\\rdp_auth\\phone.txt"`，仅在 `phone.source = "file"` 时由 helper 读取，Credential Provider 不直接打开该文件。
 - [ ] `auth_core` 提供手机号校验和脱敏函数：合法手机号按 `138****8888` 格式展示，非法手机号不暴露前后缀。
@@ -242,7 +242,7 @@
 - [ ] 配置缺失时返回结构化错误。
 - [ ] 认证方式配置缺失或非法时使用安全默认值；全部关闭时恢复默认认证方式集合。
 - [ ] helper 启动时输出脱敏诊断日志。
-- [ ] 中文注释说明最小注册表引导项、统一配置文件字段意义、缺失字段处理策略和向后兼容迁移规则。
+- [x] 中文注释说明最小注册表引导项、统一配置文件字段意义、缺失字段处理策略和向后兼容迁移规则。
 
 ## 阶段 7：真实服务端 API
 
@@ -297,8 +297,8 @@
 - [ ] `register_tool install` 注册或记录 helper 启动路径，并确保 helper 可访问统一配置文件和日志目录。
 - [ ] `register_tool health` 检查 helper 是否可启动/可连通、命名管道是否可用、session notification 是否初始化成功。
 - [ ] `register_tool status` / `health` 显示当前启用的认证方式，便于排查配置文件是否生效。
-- [ ] `register_tool status` / `health` 显示当前 MFA 超时、缺失 serialization 等待窗口、短信重新发送时间和配置来源，便于排查 VM 行为。
-- [ ] `register_tool status` / `health` 显示 helper session 状态策略：状态 TTL、首次登录等待窗口、已认证会话短等待窗口和 IPC 超时。
+- [x] `register_tool status` / `health` 显示当前 MFA 超时、缺失 serialization 等待窗口、短信重新发送时间和配置来源，便于排查 VM 行为。
+- [x] `register_tool status` / `health` 显示 helper session 状态策略：状态 TTL、首次登录等待窗口、已认证会话短等待窗口和 IPC 超时。
 - [x] 初始化 `C:\ProgramData\rdp_auth` 目录。
 - [x] 初始化日志目录。
 - [ ] 初始化远程配置缓存目录，例如 `C:\ProgramData\rdp_auth\config`。
@@ -317,9 +317,9 @@
 - [ ] 单元测试：禁用认证方式不会出现在 UI 方法列表中。
 - [ ] 单元测试：所有认证方式关闭时恢复默认认证方式集合。
 - [x] 单元测试：Credential Provider 内置认证超时默认值为 120 秒，初始 generation 为 0。
-- [ ] 单元测试：统一配置文件中的认证超时配置解析与默认值。
-- [ ] 单元测试：统一配置文件中的缺失 serialization 等待窗口和短信重新发送时间解析与默认值。
-- [ ] 单元测试：统一配置文件中的 helper session 状态 TTL、首次登录等待窗口、已认证会话短等待窗口和 IPC 超时解析与默认值。
+- [x] 单元测试：统一配置文件中的认证超时配置解析与默认值。
+- [x] 单元测试：统一配置文件中的缺失 serialization 等待窗口和短信重新发送时间解析与默认值。
+- [x] 单元测试：统一配置文件中的 helper session 状态 TTL、首次登录等待窗口、已认证会话短等待窗口和 IPC 超时解析与默认值。
 - [ ] 单元测试：缺失 serialization 保护 generation 变化后旧定时器不会断开新登录尝试。
 - [ ] 单元测试：短信倒计时 generation 变化后旧刷新线程不会覆盖新倒计时。
 - [ ] 单元测试：helper `SessionAuthState` 标记、查询、TTL 过期和清理逻辑。

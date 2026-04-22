@@ -14,9 +14,6 @@ use crate::diagnostics::log_event;
 use crate::session::disconnect_current_session;
 use crate::state::CredentialProviderState;
 
-pub const DEFAULT_MFA_TIMEOUT_SECONDS: u64 = 120;
-pub const MISSING_SERIALIZATION_GRACE_SECONDS: u64 = 1;
-
 pub fn start_mfa_timeout_timer(state: Arc<Mutex<CredentialProviderState>>) {
     let (generation, timeout_seconds) = {
         let mut state = state.lock().expect("provider state poisoned");
@@ -87,26 +84,36 @@ pub fn start_mfa_timeout_timer(state: Arc<Mutex<CredentialProviderState>>) {
 }
 
 pub fn start_missing_serialization_disconnect_timer(state: Arc<Mutex<CredentialProviderState>>) {
-    let generation = {
+    let (generation, grace_seconds, disconnect_when_missing_serialization) = {
         let mut state = state.lock().expect("provider state poisoned");
         state.timeout_generation = state.timeout_generation.wrapping_add(1);
         if state.timeout_generation == 0 {
             state.timeout_generation = 1;
         }
-        state.timeout_generation
+        (
+            state.timeout_generation,
+            state.missing_serialization_grace_seconds,
+            state.disconnect_when_missing_serialization,
+        )
     };
+
+    if !disconnect_when_missing_serialization {
+        log_event(
+            "MissingSerialization",
+            format!("timer_skipped_by_config generation={generation}"),
+        );
+        return;
+    }
 
     log_event(
         "MissingSerialization",
-        format!(
-            "timer_started generation={generation} grace_seconds={MISSING_SERIALIZATION_GRACE_SECONDS}"
-        ),
+        format!("timer_started generation={generation} grace_seconds={grace_seconds}"),
     );
 
     let spawn_result = thread::Builder::new()
         .name("rdp_auth_missing_serialization".to_owned())
         .spawn(move || {
-            thread::sleep(Duration::from_secs(MISSING_SERIALIZATION_GRACE_SECONDS));
+            thread::sleep(Duration::from_secs(grace_seconds));
             let should_disconnect = {
                 let mut state = state.lock().expect("provider state poisoned");
                 if state.timeout_generation != generation {

@@ -379,16 +379,17 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
                 }
                 // helper 接入前先只更新 UI 状态，不在 LogonUI 进程里做网络请求。
                 state.mfa_state = MfaState::WaitingInput;
-                state.sms_resend_remaining = 60;
+                state.sms_resend_remaining = state.sms_resend_seconds;
                 state.sms_resend_generation = state.sms_resend_generation.wrapping_add(1);
                 if state.sms_resend_generation == 0 {
                     state.sms_resend_generation = 1;
                 }
                 let generation = state.sms_resend_generation;
+                let remaining = state.sms_resend_remaining;
                 state.status_message = "验证码已发送，请输入短信验证码".to_owned();
                 log_event(
                     "CommandLinkClicked",
-                    format!("send_sms_mock remaining=60 generation={generation}"),
+                    format!("send_sms_mock remaining={remaining} generation={generation}"),
                 );
                 drop(state);
                 self.refresh_visible_fields()?;

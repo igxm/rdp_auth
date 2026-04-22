@@ -6,7 +6,10 @@
 use std::fmt;
 use std::path::PathBuf;
 
-use auth_config::{LoginPolicy, ensure_default_login_policy, load_login_policy};
+use auth_config::{
+    ConfigSnapshot, LoginPolicy, ensure_default_app_config_file, ensure_default_login_policy,
+    load_app_config_snapshot, load_login_policy,
+};
 use winreg::RegKey;
 use winreg::enums::HKEY_LOCAL_MACHINE;
 
@@ -78,6 +81,7 @@ pub struct HealthReport {
     pub filter_registered: bool,
     pub dll_exists: bool,
     pub login_policy: LoginPolicy,
+    pub app_config: ConfigSnapshot,
     pub runtime_dirs: String,
 }
 
@@ -108,6 +112,7 @@ impl fmt::Display for HealthReport {
             if self.dll_exists { "存在" } else { "缺失" }
         )?;
         writeln!(formatter, "登录策略:\n{}", self.login_policy)?;
+        writeln!(formatter, "业务配置:\n{}", self.app_config)?;
         write!(formatter, "{}", self.runtime_dirs)
     }
 }
@@ -144,6 +149,7 @@ pub fn register_provider(registration: &ProviderRegistration) -> Result<(), Stri
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     ensure_runtime_dirs()?;
     ensure_default_login_policy()?;
+    ensure_default_app_config_file()?;
 
     // LogonUI 通过这个路径枚举 Credential Provider。默认值只作为显示/诊断名称。
     let (provider_key, _) = hklm
@@ -274,6 +280,11 @@ pub fn query_login_policy() -> LoginPolicy {
     load_login_policy()
 }
 
+/// 查询当前统一业务配置快照。文件不可用时返回内置安全默认值和诊断来源。
+pub fn query_app_config() -> ConfigSnapshot {
+    load_app_config_snapshot()
+}
+
 /// 执行只读健康检查。
 pub fn health_check() -> Result<HealthReport, String> {
     let registration = ProviderRegistration::new(PathBuf::new())?;
@@ -296,6 +307,7 @@ pub fn health_check() -> Result<HealthReport, String> {
         filter_registered,
         dll_exists,
         login_policy: query_login_policy(),
+        app_config: load_app_config_snapshot(),
         runtime_dirs: runtime_dirs_status(),
     })
 }

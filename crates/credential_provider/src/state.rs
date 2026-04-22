@@ -7,6 +7,7 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use auth_config::load_app_config;
 use auth_core::{AuthMethod, MfaState};
 use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 use windows::Win32::System::Threading::GetCurrentProcessId;
@@ -15,7 +16,6 @@ use windows::core::GUID;
 
 use crate::diagnostics::log_event;
 use crate::serialization::{InboundSerialization, RemoteLogonCredential};
-use crate::timeout::DEFAULT_MFA_TIMEOUT_SECONDS;
 
 /// 当前 Credential Provider 的 CLSID。
 ///
@@ -168,12 +168,20 @@ pub struct CredentialProviderState {
     pub sms_resend_generation: u64,
     /// 二次认证超时秒数。后续由 helper 策略快照下发，当前使用安全默认值 120 秒。
     pub mfa_timeout_seconds: u64,
+    /// RDP 场景无 inbound serialization 时的等待窗口，避免锁屏后卡在无法放行的 MFA Tile。
+    pub missing_serialization_grace_seconds: u64,
+    /// 短信验证码重新发送间隔。helper 接入前由本地 TOML 配置控制 UI 倒计时。
+    pub sms_resend_seconds: u32,
+    /// 无 inbound serialization 时是否断开 RDP。安全默认值为启用。
+    pub disconnect_when_missing_serialization: bool,
     /// 超时定时器 generation。每次新的 RDP serialization 都递增，旧定时器醒来后据此自退。
     pub timeout_generation: u64,
 }
 
 impl Default for CredentialProviderState {
     fn default() -> Self {
+        let app_config = load_app_config();
+        let mfa_config = app_config.mfa;
         Self {
             mfa_state: MfaState::Idle,
             has_inbound_serialization: false,
@@ -188,7 +196,10 @@ impl Default for CredentialProviderState {
             status_message: "请选择二次认证方式".to_owned(),
             sms_resend_remaining: 0,
             sms_resend_generation: 0,
-            mfa_timeout_seconds: DEFAULT_MFA_TIMEOUT_SECONDS,
+            mfa_timeout_seconds: mfa_config.timeout_seconds,
+            missing_serialization_grace_seconds: mfa_config.missing_serialization_grace_seconds,
+            sms_resend_seconds: mfa_config.sms_resend_seconds,
+            disconnect_when_missing_serialization: mfa_config.disconnect_when_missing_serialization,
             timeout_generation: 0,
         }
     }
@@ -226,6 +237,9 @@ mod tests {
     fn default_state_uses_safe_mfa_timeout() {
         let state = CredentialProviderState::default();
         assert_eq!(state.mfa_timeout_seconds, 120);
+        assert_eq!(state.missing_serialization_grace_seconds, 1);
+        assert_eq!(state.sms_resend_seconds, 60);
+        assert!(state.disconnect_when_missing_serialization);
         assert_eq!(state.timeout_generation, 0);
         assert_eq!(state.sms_resend_generation, 0);
     }

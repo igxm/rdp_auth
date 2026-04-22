@@ -14,8 +14,8 @@ use std::io::Write;
 
 use cli::{Command, parse_args};
 use registry::{
-    ProviderRegistration, disable_provider, enable_provider, health_check, query_login_policy,
-    query_status, register_provider, unregister_provider,
+    ProviderRegistration, disable_provider, enable_provider, health_check, query_app_config,
+    query_login_policy, query_status, register_provider, unregister_provider,
 };
 
 fn main() {
@@ -38,6 +38,7 @@ fn run() -> Result<(), String> {
             print_line(&format!("Filter CLSID: {}", registration.filter_clsid));
             print_line(&format!("DLL: {}", registration.dll_path.display()));
             print_line(&format!("登录策略:\n{}", query_login_policy()));
+            print_line(&format!("业务配置:\n{}", query_app_config()));
         }
         Command::Uninstall => {
             unregister_provider()?;
@@ -47,6 +48,7 @@ fn run() -> Result<(), String> {
             let status = query_status()?;
             print_line(&status.to_string());
             print_line(&format!("登录策略:\n{}", query_login_policy()));
+            print_line(&format!("业务配置:\n{}", query_app_config()));
         }
         Command::Health => {
             let report = health_check()?;
