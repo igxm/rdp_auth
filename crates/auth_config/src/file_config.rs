@@ -1,7 +1,7 @@
 //! 统一配置文件读取和默认文件创建。
 //!
-//! 本模块只处理路径、文件读写、加密 envelope 调用和 TOML 解析。DPAPI 细节放在
-//! `protected_file`，配置字段和默认值归一化放在 `schema`。
+//! 本模块只处理路径、文件读写、AES 加解密调用和 TOML 解析。加密细节放在
+//! `protected_file`，机器码读取放在 `machine_code`，配置字段和默认值归一化放在 `schema`。
 
 use std::fmt;
 use std::path::PathBuf;
@@ -10,9 +10,7 @@ use winreg::RegKey;
 use winreg::enums::HKEY_LOCAL_MACHINE;
 
 use crate::login_policy::{POLICY_REGISTRY_PATH, VALUE_CONFIG_PATH};
-use crate::protected_file::{
-    ConfigEnvelopeMetadata, PlaintextFormat, protect_config_bytes, unprotect_config_bytes,
-};
+use crate::protected_file::{ConfigFileMetadata, protect_config_bytes, unprotect_config_bytes};
 use crate::schema::AppConfig;
 
 const DEFAULT_CONFIG_RELATIVE_PATH: &str = r"rdp_auth\config\rdp_auth.toml.enc";
@@ -23,7 +21,7 @@ pub struct ConfigSnapshot {
     pub path: PathBuf,
     pub exists: bool,
     pub encrypted: bool,
-    pub envelope: Option<ConfigEnvelopeMetadata>,
+    pub encryption: Option<ConfigFileMetadata>,
     pub parse_error: Option<String>,
     pub config: AppConfig,
 }
@@ -52,14 +50,11 @@ impl fmt::Display for ConfigSnapshot {
             "配置加密: {}",
             if self.encrypted { "是" } else { "否/未知" }
         )?;
-        if let Some(envelope) = &self.envelope {
+        if let Some(encryption) = &self.encryption {
             writeln!(
                 formatter,
-                "配置 envelope: version={} algorithm={} format={:?} ciphertext_len={}",
-                envelope.version,
-                envelope.algorithm,
-                envelope.plaintext_format,
-                envelope.ciphertext_len
+                "配置加密算法: {} nonce_len={} ciphertext_len={}",
+                encryption.algorithm, encryption.nonce_len, encryption.ciphertext_len
             )?;
         }
         if let Some(error) = &self.parse_error {
@@ -72,25 +67,25 @@ impl fmt::Display for ConfigSnapshot {
 /// 读取统一业务配置。文件缺失、解密失败或解析失败时回退内置安全默认值。
 pub fn load_app_config_snapshot() -> ConfigSnapshot {
     let path = load_config_path();
-    let Ok(envelope_bytes) = std::fs::read(&path) else {
+    let Ok(protected_bytes) = std::fs::read(&path) else {
         return ConfigSnapshot {
             path,
             exists: false,
             encrypted: false,
-            envelope: None,
+            encryption: None,
             parse_error: None,
             config: AppConfig::default(),
         };
     };
 
-    let (plaintext, envelope) = match unprotect_config_bytes(&envelope_bytes) {
-        Ok((plaintext, envelope)) => (plaintext, Some(envelope)),
+    let (plaintext, encryption) = match unprotect_config_bytes(&protected_bytes) {
+        Ok((plaintext, encryption)) => (plaintext, Some(encryption)),
         Err(error) => {
             return ConfigSnapshot {
                 path,
                 exists: true,
                 encrypted: false,
-                envelope: None,
+                encryption: None,
                 parse_error: Some(error.to_string()),
                 config: AppConfig::default(),
             };
@@ -104,7 +99,7 @@ pub fn load_app_config_snapshot() -> ConfigSnapshot {
                 path,
                 exists: true,
                 encrypted: true,
-                envelope,
+                encryption,
                 parse_error: Some(format!("配置明文不是 UTF-8: {error}")),
                 config: AppConfig::default(),
             };
@@ -116,7 +111,7 @@ pub fn load_app_config_snapshot() -> ConfigSnapshot {
             path,
             exists: true,
             encrypted: true,
-            envelope,
+            encryption,
             parse_error: None,
             config: config.normalized(),
         },
@@ -124,7 +119,7 @@ pub fn load_app_config_snapshot() -> ConfigSnapshot {
             path,
             exists: true,
             encrypted: true,
-            envelope,
+            encryption,
             parse_error: Some(error.to_string()),
             config: AppConfig::default(),
         },
@@ -147,7 +142,7 @@ pub fn ensure_default_app_config_file() -> Result<ConfigSnapshot, String> {
     }
     let content = toml::to_string_pretty(&AppConfig::default())
         .map_err(|error| format!("生成默认配置失败: {error}"))?;
-    let encrypted = protect_config_bytes(content.as_bytes(), PlaintextFormat::Toml)
+    let encrypted = protect_config_bytes(content.as_bytes())
         .map_err(|error| format!("加密默认配置失败: {error}"))?;
     std::fs::write(&path, encrypted)
         .map_err(|error| format!("写入默认配置 `{}` 失败: {error}", path.display()))?;

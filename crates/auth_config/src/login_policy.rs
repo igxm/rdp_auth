@@ -9,6 +9,7 @@ use winreg::RegKey;
 use winreg::enums::HKEY_LOCAL_MACHINE;
 
 use crate::file_config::default_config_path;
+use crate::machine_code::ensure_machine_code;
 
 /// 本项目自己的策略配置注册表路径。
 ///
@@ -130,6 +131,7 @@ pub fn ensure_default_login_policy() -> Result<LoginPolicy, String> {
         VALUE_CONFIG_PATH,
         &default_config_path().display().to_string(),
     )?;
+    ensure_machine_code()?;
 
     Ok(load_login_policy())
 }

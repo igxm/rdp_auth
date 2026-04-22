@@ -12,7 +12,7 @@
 - 明文导入/导出格式：TOML，仅通过 `register_tool config export/import` 或等效维护命令短暂生成和读取，不作为长期文件保留。
 - 优点：TOML 比 JSON 更适合人工编辑，支持注释，层级清晰；比 YAML 解析歧义少，Rust 生态成熟。
 - 远程配置缓存可继续使用 JSON 作为解密后的内存格式，但落盘文件也必须加密，例如 `C:\ProgramData\rdp_auth\config\remote_policy.json.enc`。
-- 手机号文件、旧版 `reginfo.ini` 迁移结果、远程配置缓存等所有业务配置文件都必须按同一加密封装落盘；明文旧文件只允许作为迁移输入，迁移成功后不得继续作为运行期配置来源。
+- 手机号文件、旧版 `reginfo.ini` 迁移结果、远程配置缓存等所有业务配置文件都必须按同一 AES 加密方式落盘；明文旧文件只允许作为迁移输入，迁移成功后不得继续作为运行期配置来源。
 
 ## 注册表边界
 
@@ -32,12 +32,12 @@
 
 优先方案：
 
-1. Windows 上使用 DPAPI 机器级保护，即 `CryptProtectData` / `CryptUnprotectData`，使配置绑定到当前机器，服务和 LogonUI 场景都可以读取。
-2. 加密文件使用统一 envelope，包含魔数、schema version、算法标识、创建时间、明文格式标识、密文长度和密文；密文内部才是 TOML 或 JSON。
-3. 注册表只保存 `ConfigPath`、`HelperPath`、启用策略和应急开关，不保存密钥、API token、手机号、远程配置内容或其它业务配置。
-4. `register_tool` 提供导入/导出能力：导出需要管理员显式执行，输出明文 TOML 仅用于人工编辑；导入后立即重新加密写回，必要时提示管理员删除临时明文。
-5. `auth_config` 只暴露解密后的结构化配置，不把明文内容写日志；解析失败、解密失败、机器不匹配或 envelope 版本不支持时回退安全默认值或 fail closed。
-6. Windows Server 2008 R2 兼容验证必须包含 DPAPI 机器级加密/解密测试；如果 DPAPI 路径不可用，才评估受 ACL 保护的本机密钥文件，但该降级方案需要额外审计和 VM 验证。
+1. 首次安装时根据机器信息生成唯一机器码，写入 `HKLM\SOFTWARE\rdp_auth\config\MachineCode`。
+2. 运行期使用注册表机器码派生 AES-256 key，配置文件使用 AES-256-GCM 加密；文件内容为 `nonce + ciphertext`，不再使用 envelope。
+3. 注册表保存 `ConfigPath`、`HelperPath`、`MachineCode`、启用策略和应急开关，不保存 API token、手机号、远程配置内容或其它业务配置。
+4. `register_tool` 提供导入/导出能力：导出需要管理员显式执行，输出明文 TOML 仅用于人工编辑；导入后立即用 AES 重新加密写回，必要时提示管理员删除临时明文。
+5. `auth_config` 只暴露解密后的结构化配置，不把明文内容写日志；解析失败、解密失败、机器码缺失或密文损坏时回退安全默认值或 fail closed。
+6. Windows Server 2008 R2 兼容验证必须包含机器码生成、注册表写入、AES 加密/解密和重启后继续读取测试。
 
 ## 配置优先级
 
@@ -100,8 +100,8 @@ diagnostic_level = "info"
 
 ## 实现拆分
 
-- `register_tool`：安装时创建配置目录和默认加密 TOML；已有文件不覆盖；注册表只写最小引导项；提供明文 TOML 的导入/导出维护命令。
-- `auth_config`：解析注册表引导项、解密配置 envelope、解析 TOML、本地默认值和远程缓存，输出结构化配置。
+- `register_tool`：安装时创建配置目录、生成/保存机器码并创建默认 AES 加密 TOML；已有文件不覆盖；注册表只写最小引导项和机器码；提供明文 TOML 的导入/导出维护命令。
+- `auth_config`：解析注册表引导项、读取机器码、AES 解密配置文件、解析 TOML、本地默认值和远程缓存，输出结构化配置。
 - `remote_auth`：读取完整配置，生成脱敏策略快照，通过 IPC 下发给 Credential Provider。
 - `credential_provider`：只消费 helper 下发的策略快照；在 helper 未接入前使用内置安全默认值。
 
@@ -112,4 +112,4 @@ diagnostic_level = "info"
 - 认证方式全部关闭时自动恢复手机验证码和二次密码，不能导致绕过 MFA。
 - 文件模式手机号只能由 helper 读取和校验，策略快照只包含脱敏手机号。
 - 远程配置必须带版本、更新时间、TTL 和签名或 HMAC；校验失败不得生效。
-- 单元测试和 VM 测试必须覆盖加密文件读取、错误密文、旧版明文迁移、导入/导出和 2008 R2 DPAPI 兼容性。
+- 单元测试和 VM 测试必须覆盖 AES 加密文件读取、错误密文、错误机器码、旧版明文迁移、导入/导出和 2008 R2 兼容性。
