@@ -164,6 +164,8 @@ pub struct CredentialProviderState {
     /// 短信验证码重新发送剩余秒数。倒计时后续需要由 LogonUI 事件或 helper 心跳推进；
     /// 当前先保存禁用态，避免用户连续点击发送验证码。
     pub sms_resend_remaining: u32,
+    /// 短信倒计时 generation。重复点击或后续真实 helper 重置倒计时时，旧刷新线程醒来后自退。
+    pub sms_resend_generation: u64,
     /// 二次认证超时秒数。后续由 helper 策略快照下发，当前使用安全默认值 120 秒。
     pub mfa_timeout_seconds: u64,
     /// 超时定时器 generation。每次新的 RDP serialization 都递增，旧定时器醒来后据此自退。
@@ -185,6 +187,7 @@ impl Default for CredentialProviderState {
             second_password: String::new(),
             status_message: "请选择二次认证方式".to_owned(),
             sms_resend_remaining: 0,
+            sms_resend_generation: 0,
             mfa_timeout_seconds: DEFAULT_MFA_TIMEOUT_SECONDS,
             timeout_generation: 0,
         }
@@ -224,6 +227,7 @@ mod tests {
         let state = CredentialProviderState::default();
         assert_eq!(state.mfa_timeout_seconds, 120);
         assert_eq!(state.timeout_generation, 0);
+        assert_eq!(state.sms_resend_generation, 0);
     }
 
     #[test]

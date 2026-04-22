@@ -125,7 +125,7 @@ Get-Content C:\ProgramData\rdp_auth\logs\credential_provider.log -Tail 80
 6. 使用错误验证码或错误二次密码验证阻断：应停留在当前 Tile，不应进入桌面。
 7. 点击取消应断开当前 RDP 连接。
 8. 在 RDP 二次认证 Tile 停留超过默认 2 分钟且不完成认证，应自动断开当前 RDP 连接。为了缩短测试时间，后续接入统一配置文件后可临时调小 `mfa.timeout_seconds` 验证该路径。
-9. 登录后锁屏或注销返回登录界面时，如果没有新的 RDP/NLA inbound serialization，应在短暂等待后断开当前 RDP 连接；用户重新连接后会重新提供 Windows 一次凭证。
+9. 登录后锁屏或注销返回登录界面时，如果没有新的 RDP/NLA inbound serialization，应在约 1 秒后断开当前 RDP 连接；用户重新连接后会重新提供 Windows 一次凭证。
 10. 登录后再次执行 `register_tool.exe health`，确认注册表入口、DLL 路径和三项策略仍符合预期。
 
 如果 RDP 登录页同时显示系统默认入口和 `RDP 二次认证`，优先检查：

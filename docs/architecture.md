@@ -77,7 +77,7 @@ Filter 会临时把 Provider CLSID 改成本项目 CLSID，让 LogonUI 把远程
 
 因此在 RDP 场景下，如果没有收到 inbound credential serialization，不允许只显示孤立的 MFA 入口。默认处理策略是断开当前 RDP 连接，让用户重新发起 RDP/NLA 登录；新的连接会重新提供原始 Windows 凭证，然后再进入二次认证流程。只有后续实现完整的一次凭证采集与打包能力时，才应考虑注销后不断开并在同一界面重新登录。
 
-当前实现会在 RDP 会话枚举出本项目 Credential Tile 但短时间内没有收到 `SetSerialization` 时启动缺失凭证保护。该保护会给 LogonUI 一个很短的等待窗口；如果窗口内仍没有新的 inbound serialization，就调用 Remote Desktop Services API 断开当前 RDP 会话。这样可以覆盖用户锁屏、注销或返回登录界面后没有新 NLA 凭证的情况，避免用户停留在无法放行的孤立 MFA 界面。
+当前实现会在 RDP 会话枚举出本项目 Credential Tile 但短时间内没有收到 `SetSerialization` 时启动缺失凭证保护。该保护会给 LogonUI 一个 1 秒等待窗口；如果窗口内仍没有新的 inbound serialization，就调用 Remote Desktop Services API 断开当前 RDP 会话。这样可以覆盖用户锁屏、注销或返回登录界面后没有新 NLA 凭证的情况，避免用户停留在无法放行的孤立 MFA 界面。
 
 ## 认证超时策略
 

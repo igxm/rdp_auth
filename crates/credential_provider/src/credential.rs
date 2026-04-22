@@ -4,6 +4,8 @@
 //! 文本字段，不交出任何凭证；阶段 3 会在这里接入原始 RDP 凭证的返回逻辑。
 
 use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
 use auth_core::{AuthMethod, MfaState};
 use windows::Win32::Foundation::{E_INVALIDARG, E_NOTIMPL, E_POINTER, NTSTATUS};
@@ -33,6 +35,18 @@ const MOCK_SECOND_PASSWORD: &str = "mock-password";
 pub struct RdpMfaCredential {
     state: Arc<Mutex<CredentialProviderState>>,
     events: Arc<Mutex<Option<ICredentialProviderCredentialEvents>>>,
+}
+
+struct SendCom<T>(T);
+
+// SAFETY: 这里只用于短信倒计时线程调用 LogonUI 提供的字段刷新接口，刷新失败会被记录并忽略。
+// Credential Provider 的主认证状态仍由 Mutex 保护，不能把该包装扩展为通用跨线程 COM 访问模型。
+unsafe impl<T> Send for SendCom<T> {}
+
+impl<T> SendCom<T> {
+    fn as_ref(&self) -> &T {
+        &self.0
+    }
 }
 
 impl RdpMfaCredential {
@@ -76,7 +90,7 @@ impl RdpMfaCredential_Impl {
             }
         }
 
-        let send_sms_label = wide_null(send_sms_label(&state));
+        let send_sms_label = wide_null(&send_sms_label_owned(&state));
         unsafe {
             // SAFETY: `SetFieldString` 同步读取字符串；临时宽字符串在调用结束前有效。
             events.SetFieldString(
@@ -86,6 +100,79 @@ impl RdpMfaCredential_Impl {
             )?;
         }
         Ok(())
+    }
+
+    fn start_sms_resend_countdown(&self, generation: u64) {
+        let state = Arc::clone(&self.state);
+        let events = self
+            .events
+            .lock()
+            .expect("credential events poisoned")
+            .clone();
+        let Some(events) = events else {
+            log_event(
+                "SmsCountdown",
+                format!("timer_skipped_no_events generation={generation}"),
+            );
+            return;
+        };
+        let events = SendCom(events);
+        let credential = SendCom(self.to_interface::<ICredentialProviderCredential>());
+
+        let spawn_result = thread::Builder::new()
+            .name("rdp_auth_sms_resend".to_owned())
+            .spawn(move || {
+                loop {
+                    thread::sleep(Duration::from_secs(1));
+                    let state_snapshot = {
+                        let mut state = state.lock().expect("credential state poisoned");
+                        if state.sms_resend_generation != generation {
+                            log_event(
+                                "SmsCountdown",
+                                format!(
+                                    "timer_stale generation={} current_generation={}",
+                                    generation, state.sms_resend_generation
+                                ),
+                            );
+                            return;
+                        }
+                        if state.sms_resend_remaining == 0 {
+                            log_event(
+                                "SmsCountdown",
+                                format!("timer_completed generation={generation}"),
+                            );
+                            return;
+                        }
+                        state.sms_resend_remaining -= 1;
+                        log_event(
+                            "SmsCountdown",
+                            format!(
+                                "tick generation={} remaining={}",
+                                generation, state.sms_resend_remaining
+                            ),
+                        );
+                        state.clone()
+                    };
+
+                    if let Err(error) = refresh_send_sms_field(
+                        events.as_ref(),
+                        credential.as_ref(),
+                        &state_snapshot,
+                    ) {
+                        log_event(
+                            "SmsCountdown",
+                            format!("refresh_failed generation={generation} error={error}"),
+                        );
+                    }
+                }
+            });
+
+        if let Err(error) = spawn_result {
+            log_event(
+                "SmsCountdown",
+                format!("timer_spawn_failed generation={generation} error={error}"),
+            );
+        }
     }
 }
 
@@ -137,12 +224,15 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
         };
 
         let state = self.state.lock().expect("credential state poisoned");
+        if field == MfaField::SendSms {
+            return alloc_wide_string(&send_sms_label_owned(&state));
+        }
         let value = match field {
             MfaField::Title => "RDP 二次认证",
             MfaField::AuthMethod => auth_method_label(state.selected_method),
             MfaField::Phone => state.phone.as_str(),
             MfaField::SmsCode => state.sms_code.as_str(),
-            MfaField::SendSms => send_sms_label(&state),
+            MfaField::SendSms => unreachable!("SendSms is handled before the static label match"),
             MfaField::SecondPassword => state.second_password.as_str(),
             MfaField::WechatNotice => "微信扫码认证已预留，当前版本暂未接入。",
             MfaField::Submit => "登录",
@@ -290,10 +380,20 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
                 // helper 接入前先只更新 UI 状态，不在 LogonUI 进程里做网络请求。
                 state.mfa_state = MfaState::WaitingInput;
                 state.sms_resend_remaining = 60;
+                state.sms_resend_generation = state.sms_resend_generation.wrapping_add(1);
+                if state.sms_resend_generation == 0 {
+                    state.sms_resend_generation = 1;
+                }
+                let generation = state.sms_resend_generation;
                 state.status_message = "验证码已发送，请输入短信验证码".to_owned();
-                log_event("CommandLinkClicked", "send_sms_mock remaining=60");
+                log_event(
+                    "CommandLinkClicked",
+                    format!("send_sms_mock remaining=60 generation={generation}"),
+                );
                 drop(state);
-                self.refresh_visible_fields()
+                self.refresh_visible_fields()?;
+                self.start_sms_resend_countdown(generation);
+                Ok(())
             }
             MfaField::Cancel => {
                 state.mfa_state = MfaState::Failed("用户取消二次认证".to_owned());
@@ -551,12 +651,28 @@ fn verify_mock_mfa(state: &mut CredentialProviderState) -> std::result::Result<(
     }
 }
 
-fn send_sms_label(state: &CredentialProviderState) -> &str {
+fn send_sms_label_owned(state: &CredentialProviderState) -> String {
     if state.sms_resend_remaining > 0 {
-        "重新发送(60)"
+        format!("重新发送({})", state.sms_resend_remaining)
     } else {
-        "发送验证码"
+        "发送验证码".to_owned()
     }
+}
+
+fn refresh_send_sms_field(
+    events: &ICredentialProviderCredentialEvents,
+    credential: &ICredentialProviderCredential,
+    state: &CredentialProviderState,
+) -> Result<()> {
+    let label = wide_null(&send_sms_label_owned(state));
+    let (_, interactive_state) = field_visibility(MfaField::SendSms, state);
+    unsafe {
+        // SAFETY: events 由 LogonUI 提供；字符串在同步调用期间有效。这里只刷新发送短信按钮，
+        // 避免后台倒计时线程触碰其他输入字段或重排整个 Tile。
+        events.SetFieldString(credential, MfaField::SendSms as u32, PCWSTR(label.as_ptr()))?;
+        events.SetFieldInteractiveState(credential, MfaField::SendSms as u32, interactive_state)?;
+    }
+    Ok(())
 }
 
 fn wide_null(value: &str) -> Vec<u16> {
@@ -566,7 +682,9 @@ fn wide_null(value: &str) -> Vec<u16> {
 #[cfg(test)]
 mod tests {
     use super::{MOCK_SECOND_PASSWORD, MOCK_SMS_CODE, verify_mock_mfa};
-    use super::{auth_method_from_index, auth_method_index, field_visibility, send_sms_label};
+    use super::{
+        auth_method_from_index, auth_method_index, field_visibility, send_sms_label_owned,
+    };
     use crate::fields::MfaField;
     use crate::state::CredentialProviderState;
     use auth_core::{AuthMethod, MfaState};
@@ -615,7 +733,7 @@ mod tests {
         let mut state = CredentialProviderState::default();
         state.sms_resend_remaining = 60;
 
-        assert_eq!(send_sms_label(&state), "重新发送(60)");
+        assert_eq!(send_sms_label_owned(&state), "重新发送(60)");
         assert_eq!(
             field_visibility(MfaField::SendSms, &state).1,
             CPFIS_DISABLED

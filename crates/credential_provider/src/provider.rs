@@ -195,6 +195,15 @@ impl ICredentialProvider_Impl for RdpMfaProvider_Impl {
             *default = CREDENTIAL_PROVIDER_NO_DEFAULT;
             *autologon_with_default = false.into();
         }
+        let should_guard_missing_inbound = {
+            let state = self.state.lock().expect("provider state poisoned");
+            !state.has_inbound_serialization && is_current_rdp_session()
+        };
+        if should_guard_missing_inbound {
+            // 在 LogonUI 真正取 Credential 对象前先启动保护，尽量减少孤立 MFA Tile
+            // 可见时间；如果随后 SetSerialization 到达，generation 会让该定时器自退。
+            start_missing_serialization_disconnect_timer(Arc::clone(&self.state));
+        }
         log_event("GetCredentialCount", "count=1 default=none autologon=false");
         Ok(())
     }

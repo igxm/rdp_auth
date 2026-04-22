@@ -15,7 +15,7 @@ use crate::session::disconnect_current_session;
 use crate::state::CredentialProviderState;
 
 pub const DEFAULT_MFA_TIMEOUT_SECONDS: u64 = 120;
-pub const MISSING_SERIALIZATION_GRACE_SECONDS: u64 = 5;
+pub const MISSING_SERIALIZATION_GRACE_SECONDS: u64 = 1;
 
 pub fn start_mfa_timeout_timer(state: Arc<Mutex<CredentialProviderState>>) {
     let (generation, timeout_seconds) = {

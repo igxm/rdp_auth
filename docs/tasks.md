@@ -110,7 +110,7 @@
 - [ ] 手机号不合法时不允许进入发送短信流程，刷新状态提示为“请输入正确的手机号”或“手机号配置无效，请联系管理员”。
 - [x] 删除底部重复状态区域，避免登录按钮下方再出现一块“第二部分”内容。
 - [x] 发送验证码后立即把按钮切换为禁用态，并显示 `重新发送(60)`。
-- [ ] 实现短信验证码重新发送倒计时递减，并在 60 秒后恢复为可点击 `发送验证码`。（需结合 LogonUI events 的受控刷新或 helper 心跳，避免在 CP DLL 中用不受控后台线程刷 UI）
+- [x] 实现短信验证码重新发送倒计时递减，并在 60 秒后恢复为可点击 `发送验证码`。（当前通过 LogonUI events 只刷新发送短信按钮；后续接入 helper 后可改为 helper 心跳驱动）
 - [x] 增加认证超时断开机制：收到 RDP inbound serialization 后启动默认 2 分钟的一次性定时器，超时仍未完成二次认证时自动断开当前 RDP 会话。
 - [ ] 认证超时断开时间后续改为从统一配置文件读取，缺失时默认 120 秒。
 - [x] 设计 `MfaState` 状态机：空闲、发送短信中、等待输入、认证中、成功、失败。
@@ -120,7 +120,7 @@
 - [x] 修复 mock MFA 通过后仍提示用户名或密码错误：Filter 记录 RDP 原始 Provider CLSID 时同时写入按 session 区分的 handoff 文件，Provider 在 `SetSerialization` 阶段跨进程恢复原始 Provider CLSID；随后解包 RDP inbound buffer 并重新打包为 Kerberos interactive 凭证后放行，VM 日志已验证成功。
 - [x] 增加 Credential Provider 脱敏诊断日志：记录 Filter、SetSerialization、mock 验证、GetSerialization、ReportResult 的链路阶段，便于定位 mock MFA 通过后仍无法进入桌面的问题。
 - [x] 点击取消按钮时，调用 Remote Desktop Services API 断开当前 RDP 会话。
-- [x] 增加 RDP 注销/返回登录界面保护：如果 RDP 场景下没有收到 inbound credential serialization，不允许只显示 MFA 入口，默认断开当前 RDP 连接，迫使用户重新发起 RDP/NLA 并重新提供原始凭证。
+- [x] 增加 RDP 注销/返回登录界面保护：如果 RDP 场景下没有收到 inbound credential serialization，不允许只显示 MFA 入口，约 1 秒后断开当前 RDP 连接，迫使用户重新发起 RDP/NLA 并重新提供原始凭证。
 - [x] 中文注释解释 LogonUI UI 更新机制和状态切换原因。
 
 ## 阶段 5：本地 helper 与 IPC
