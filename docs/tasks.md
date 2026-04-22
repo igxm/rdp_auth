@@ -7,7 +7,7 @@
 - 中文注释应解释“为什么这样做”和“此处有什么坑”，避免只重复代码表面含义。
 - 代码必须按功能或逻辑分层，不允许把 COM 导出、类工厂、Provider、Credential、字段定义、凭证序列化、IPC、配置读取、API 调用等长期堆在同一个文件。
 - Credential Provider DLL 只做 RDP 凭证接收、二次认证 UI、调用本地 helper、认证通过后转交原始凭证。
-- 网络请求、注册表读取、日志、策略判断都放到本地 helper，避免 LogonUI 进程被阻塞或拖垮。
+- 网络请求、注册表读取、业务审计日志、策略判断都放到本地 helper，避免 LogonUI 进程被阻塞或拖垮；Credential Provider DLL 只允许写入轻量脱敏诊断日志，且日志失败不能影响登录流程。
 - 第一阶段不隐藏系统默认 Credential Provider，确认 RDP pass-through 链路稳定后再实现过滤器，降低锁死测试机风险。
 
 ## 总体目标
@@ -88,6 +88,7 @@
 - [x] 二次认证未通过时，`GetSerialization` 不返回原始凭证。
 - [x] 二次认证通过后，`GetSerialization` 返回缓存的原始凭证。
 - [x] 修复 mock MFA 通过后仍提示用户名或密码错误：Filter 记录 RDP 原始 Provider CLSID 时同时写入按 session 区分的 handoff 文件，Provider 在 `SetSerialization` 阶段跨进程恢复原始 Provider CLSID 后再放行。
+- [x] 增加 Credential Provider 脱敏诊断日志：记录 Filter、SetSerialization、mock 验证、GetSerialization、ReportResult 的链路阶段，便于定位 mock MFA 通过后仍无法进入桌面的问题。
 - [x] 点击取消按钮时，调用 Remote Desktop Services API 断开当前 RDP 会话。
 - [ ] 增加 RDP 注销/返回登录界面保护：如果 RDP 场景下没有收到 inbound credential serialization，不允许只显示 MFA 入口，默认断开当前 RDP 连接，迫使用户重新发起 RDP/NLA 并重新提供原始凭证。
 - [x] 中文注释解释 LogonUI UI 更新机制和状态切换原因。
@@ -189,6 +190,7 @@
 - [ ] 单元测试：认证超时配置解析与默认值。
 - [ ] 集成测试：认证超时后自动断开当前 RDP 会话。
 - [x] 单元测试：RDP 原始 Provider CLSID 可通过跨进程 handoff 文件恢复。
+- [x] 单元测试：Credential Provider 诊断日志会清理换行符，避免单条日志被拆行。
 - [ ] 单元测试：IPC 请求响应序列化。
 - [ ] 单元测试：注册表配置解析。
 - [ ] 单元测试：API 错误映射。
@@ -206,6 +208,7 @@
 
 - [ ] Windows 密码和 RDP 原始凭证 serialization 不写日志。
 - [ ] 验证码、二次密码、token 不写日志。
+- [x] Credential Provider 诊断日志只记录阶段、PID、session、Provider GUID、serialization 长度和错误码，写入失败不影响 LogonUI。
 - [ ] 使用后清理敏感内存，必要处调用 Windows 安全清零 API。
 - [ ] helper 路径固定，并校验文件存在性。
 - [ ] CP 与 helper IPC 增加调用方校验或权限控制。

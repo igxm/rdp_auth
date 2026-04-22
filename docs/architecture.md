@@ -30,6 +30,8 @@ mstsc / RDP Client
 
 Credential Provider DLL 运行在 LogonUI 相关进程内。网络超时、TLS 初始化、注册表异常、panic 或死锁都会影响 Windows 登录体验。因此 DLL 只做 UI、状态机、IPC 和原始凭证转交，复杂逻辑全部放入 `remote_auth.exe`。
 
+DLL 内允许写入极轻量的本地诊断日志，用于排查 RDP pass-through 链路问题。日志路径为 `C:\ProgramData\rdp_auth\logs\credential_provider.log`，只记录阶段、PID、session、Provider GUID、serialization 长度、认证状态和 Windows `ReportResult` 状态码；不得记录用户名、密码、验证码、token 或 `rgbSerialization` 字节内容。日志写入失败必须被忽略，不能影响 LogonUI 主流程。
+
 ## Credential Provider Filter 策略
 
 当前已经实现 `ICredentialProviderFilter`，用于防止 RDP/NLA 场景绕过二次认证。Filter 的策略必须区分 RDP 会话和本地控制台会话：
@@ -66,6 +68,8 @@ Credential Provider Tile 已经预留以下二次认证字段：
 mock 认证通过后，`GetSerialization` 才返回缓存的 RDP 原始凭证；mock 认证失败时返回 `CPGSR_NO_CREDENTIAL_NOT_FINISHED`，LogonUI 会停留在当前 Tile。点击取消会调用 Remote Desktop Services API 断开当前会话，用于结束本次 RDP 登录尝试。
 
 放行时必须恢复 RDP 远程凭证原始 Provider CLSID。Filter 会临时把 Provider CLSID 改成本项目 CLSID，让 LogonUI 把 serialization 交给二次认证 Tile；但 `GetSerialization` 返回给系统继续登录时，应恢复原始 Provider CLSID 和原始字节，否则可能出现 mock 认证通过后仍提示用户名或密码错误。实机 RDP 链路里 `UpdateRemoteCredential()` 与 Provider `SetSerialization()` 可能不在同一进程内，因此原始 Provider CLSID 同时通过进程内缓存和 `C:\ProgramData\rdp_auth` 下按 session 区分的临时 handoff 文件传递；handoff 文件只保存 Provider GUID，不保存用户名、密码或 serialization 字节，并在读取后删除。
+
+排查 mock MFA 通过后仍无法进入桌面时，优先查看 `credential_provider.log` 中是否出现完整链路：`UpdateRemoteCredential route_to_mfa`、`RemoteProviderHandoff write_ok`、`SetSerialization restored_source_provider`、`GetSerialization returning_inbound`。如果这些都正常但随后 `ReportResult` 返回 `0xC000006D` 等登录失败状态，说明 Windows 已收到凭证但 LSA 拒绝，需要继续检查返回的认证包、Provider CLSID 或 RDP/NLA 凭证模型。
 
 ## RDP 注销与无原始凭证策略
 

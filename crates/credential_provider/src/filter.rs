@@ -19,6 +19,7 @@ use windows::Win32::UI::Shell::{
 use windows::core::PWSTR;
 use windows::core::{BOOL, Error, GUID, Result, implement};
 
+use crate::diagnostics::log_event;
 use crate::serialization::InboundSerialization;
 use crate::state::{RDP_MFA_PROVIDER_CLSID, remember_remote_source_provider};
 
@@ -49,11 +50,18 @@ impl ICredentialProviderFilter_Impl for RdpMfaFilter_Impl {
         };
 
         let policy = load_login_policy();
-        let filter_action =
-            filter_action_for_scenario(policy, usage_scenario, is_current_rdp_session());
+        let is_rdp_session = is_current_rdp_session();
+        let filter_action = filter_action_for_scenario(policy, usage_scenario, is_rdp_session);
         let has_our_provider = providers
             .iter()
             .any(|provider| *provider == RDP_MFA_PROVIDER_CLSID);
+        log_event(
+            "Filter",
+            format!(
+                "provider_count={} has_our_provider={} policy={} is_rdp_session={} action={:?}",
+                provider_count, has_our_provider, policy, is_rdp_session, filter_action
+            ),
+        );
         if matches!(
             filter_action,
             ProviderFilterAction::LeaveUnchanged | ProviderFilterAction::OnlyOurProvider
@@ -87,10 +95,19 @@ impl ICredentialProviderFilter_Impl for RdpMfaFilter_Impl {
         output: *mut CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION,
     ) -> Result<()> {
         if input.is_null() || output.is_null() {
+            log_event("UpdateRemoteCredential", "null input_or_output");
             return Err(Error::from_hresult(E_POINTER));
         }
 
         let policy = load_login_policy();
+        log_event(
+            "UpdateRemoteCredential",
+            format!(
+                "called policy={} should_route_rdp={}",
+                policy,
+                policy.should_route_rdp()
+            ),
+        );
         if !policy.should_route_rdp() {
             // 应急禁用或关闭 RDP MFA 时，不改写远程凭证归属，交回系统默认 Provider 处理。
             // 这样管理员可以通过注册表开关快速恢复 RDP 登录测试环境。
@@ -98,6 +115,15 @@ impl ICredentialProviderFilter_Impl for RdpMfaFilter_Impl {
                 // SAFETY: 指针来自 LogonUI，立即深拷贝，不保存原始指针。
                 InboundSerialization::copy_from_raw(input)?
             };
+            log_event(
+                "UpdateRemoteCredential",
+                format!(
+                    "bypass_route auth_package={} source_provider={:?} bytes_len={}",
+                    inbound.authentication_package,
+                    inbound.provider_clsid(),
+                    inbound.bytes.len()
+                ),
+            );
             return inbound.write_to_with_provider(output, inbound.provider_clsid());
         }
 
@@ -107,6 +133,16 @@ impl ICredentialProviderFilter_Impl for RdpMfaFilter_Impl {
             // SAFETY: 指针来自 LogonUI，立即深拷贝，不保存原始指针。
             InboundSerialization::copy_from_raw(input)?
         };
+        log_event(
+            "UpdateRemoteCredential",
+            format!(
+                "route_to_mfa auth_package={} source_provider={:?} target_provider={:?} bytes_len={}",
+                inbound.authentication_package,
+                inbound.provider_clsid(),
+                RDP_MFA_PROVIDER_CLSID,
+                inbound.bytes.len()
+            ),
+        );
         remember_remote_source_provider(inbound.provider_clsid());
         inbound.write_to_with_provider(output, RDP_MFA_PROVIDER_CLSID)
     }

@@ -95,7 +95,25 @@ reg add "HKLM\SOFTWARE\rdp_auth\config" /v DisableMfa /t REG_DWORD /d 0 /f
 
 如果 Filter 缺失，RDP/NLA 凭证仍可能被系统默认 Password Provider 自动消费，表现为能看到 `RDP 二次认证` Tile，但登录不会停留在二次认证流程。
 
-## 5. 登录验证
+## 5. 诊断日志
+
+Credential Provider 会写入脱敏诊断日志：
+
+```powershell
+Get-Content C:\ProgramData\rdp_auth\logs\credential_provider.log -Tail 80
+```
+
+日志用于排查 `UpdateRemoteCredential`、`SetSerialization`、mock MFA 放行、`GetSerialization` 和 Windows `ReportResult` 的链路。日志只允许包含 PID、session、Provider GUID、serialization 长度、认证状态和错误码，不应包含用户名、密码、验证码、token 或原始 serialization 字节。
+
+如果 mock MFA 通过后仍提示“用户名或密码错误”，重点看最近一次 RDP 登录是否有这些阶段：
+
+- `UpdateRemoteCredential route_to_mfa`
+- `RemoteProviderHandoff write_ok`
+- `SetSerialization restored_source_provider`
+- `GetSerialization returning_inbound`
+- `ReportResult status=... sub_status=...`
+
+## 6. 登录验证
 
 每次安装新 DLL 后，按下面顺序验证。
 
@@ -123,7 +141,7 @@ reg add "HKLM\SOFTWARE\rdp_auth\config" /v DisableMfa /t REG_DWORD /d 0 /f
 
 当前 mock 认证只用于验证 Credential Provider 主链路，真实短信发送、二次密码校验和登录日志上报仍在后续 helper/API 阶段接入。
 
-## 6. 策略调整
+## 7. 策略调整
 
 如需让本地控制台登录也进入二次认证：
 
@@ -151,7 +169,7 @@ reg add "HKLM\SOFTWARE\rdp_auth\config" /v EnableRdpMfa /t REG_DWORD /d 0 /f
 reg add "HKLM\SOFTWARE\rdp_auth\config" /v EnableRdpMfa /t REG_DWORD /d 1 /f
 ```
 
-## 7. 应急禁用和恢复
+## 8. 应急禁用和恢复
 
 如果安装后登录界面异常，优先在管理员 PowerShell 中删除 LogonUI 枚举入口：
 
@@ -200,7 +218,7 @@ reg add "HKLM\SOFTWARE\rdp_auth\config" /v DisableMfa /t REG_DWORD /d 0 /f
 
 也可以离线把 `HKLM\SOFTWARE\rdp_auth\config\DisableMfa` 设置为 `1`。恢复后先确认本地控制台能看到系统默认登录入口，再继续排查 DLL 路径和策略配置。
 
-## 8. 卸载
+## 9. 卸载
 
 在管理员 PowerShell 中执行：
 

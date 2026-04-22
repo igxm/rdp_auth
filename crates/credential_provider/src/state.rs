@@ -13,6 +13,7 @@ use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Shell::{CPUS_LOGON, CREDENTIAL_PROVIDER_USAGE_SCENARIO};
 use windows::core::GUID;
 
+use crate::diagnostics::log_event;
 use crate::serialization::InboundSerialization;
 
 /// 当前 Credential Provider 的 CLSID。
@@ -41,7 +42,16 @@ pub fn remember_remote_source_provider(provider: GUID) {
     *LAST_REMOTE_SOURCE_PROVIDER
         .lock()
         .expect("remote source provider lock poisoned") = Some(provider);
-    let _ = write_remote_source_provider_handoff(provider);
+    match write_remote_source_provider_handoff(provider) {
+        Ok(()) => log_event(
+            "RemoteProviderHandoff",
+            format!("write_ok provider={:?}", provider),
+        ),
+        Err(error) => log_event(
+            "RemoteProviderHandoff",
+            format!("write_failed provider={:?} error={}", provider, error),
+        ),
+    }
 }
 
 /// 取出最近一次 RDP 远程凭证的原始 Provider CLSID。
@@ -52,9 +62,18 @@ pub fn take_remote_source_provider() -> Option<GUID> {
         .take();
     if memory_provider.is_some() {
         let _ = remove_remote_source_provider_handoff();
+        log_event(
+            "RemoteProviderHandoff",
+            format!("take_memory provider={:?}", memory_provider),
+        );
         return memory_provider;
     }
-    read_remote_source_provider_handoff()
+    let file_provider = read_remote_source_provider_handoff();
+    log_event(
+        "RemoteProviderHandoff",
+        format!("take_file provider={:?}", file_provider),
+    );
+    file_provider
 }
 
 fn write_remote_source_provider_handoff(provider: GUID) -> std::io::Result<()> {

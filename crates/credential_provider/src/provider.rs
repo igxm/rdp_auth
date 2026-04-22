@@ -15,6 +15,7 @@ use windows::Win32::UI::Shell::{
 use windows::core::{BOOL, Error, Ref, Result, implement};
 
 use crate::credential::RdpMfaCredential;
+use crate::diagnostics::log_event;
 use crate::fields::{FIELD_COUNT, field_descriptor};
 use crate::serialization::InboundSerialization;
 use crate::state::{CredentialProviderState, RDP_MFA_PROVIDER_CLSID, take_remote_source_provider};
@@ -44,6 +45,10 @@ impl ICredentialProvider_Impl for RdpMfaProvider_Impl {
     ) -> Result<()> {
         match usage_scenario {
             CPUS_LOGON | CPUS_UNLOCK_WORKSTATION => {
+                log_event(
+                    "SetUsageScenario",
+                    format!("accepted usage_scenario={:?}", usage_scenario),
+                );
                 self.state
                     .lock()
                     .expect("provider state poisoned")
@@ -51,7 +56,13 @@ impl ICredentialProvider_Impl for RdpMfaProvider_Impl {
                 Ok(())
             }
             // 当前目标是 RDP 登录后二次认证，所以改密、CredUI、PLAP 都先明确拒绝。
-            _ => Err(Error::from_hresult(E_NOTIMPL)),
+            _ => {
+                log_event(
+                    "SetUsageScenario",
+                    format!("rejected usage_scenario={:?}", usage_scenario),
+                );
+                Err(Error::from_hresult(E_NOTIMPL))
+            }
         }
     }
 
@@ -60,15 +71,40 @@ impl ICredentialProvider_Impl for RdpMfaProvider_Impl {
         serialization: *const CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION,
     ) -> Result<()> {
         let copied = if serialization.is_null() {
+            log_event("SetSerialization", "called with null serialization");
             None
         } else {
             let mut copied = unsafe {
                 // SAFETY: 指针来自 LogonUI 的 `SetSerialization` 调用，立即深拷贝，不保存原始指针。
                 InboundSerialization::copy_from_raw(serialization)?
             };
+            log_event(
+                "SetSerialization",
+                format!(
+                    "copied auth_package={} source_provider={:?} bytes_len={}",
+                    copied.authentication_package,
+                    copied.source_provider,
+                    copied.bytes.len()
+                ),
+            );
             if copied.source_provider == RDP_MFA_PROVIDER_CLSID {
                 if let Some(source_provider) = take_remote_source_provider() {
+                    log_event(
+                        "SetSerialization",
+                        format!(
+                            "restored_source_provider from={:?} to={:?}",
+                            RDP_MFA_PROVIDER_CLSID, source_provider
+                        ),
+                    );
                     copied.source_provider = source_provider;
+                } else {
+                    log_event(
+                        "SetSerialization",
+                        format!(
+                            "missing_original_source_provider current_provider={:?}",
+                            copied.source_provider
+                        ),
+                    );
                 }
             }
             Some(copied)
@@ -77,6 +113,13 @@ impl ICredentialProvider_Impl for RdpMfaProvider_Impl {
         let mut state = self.state.lock().expect("provider state poisoned");
         state.has_inbound_serialization = copied.is_some();
         state.inbound_serialization = copied;
+        log_event(
+            "SetSerialization",
+            format!(
+                "state_updated has_inbound_serialization={}",
+                state.has_inbound_serialization
+            ),
+        );
         Ok(())
     }
 
@@ -119,13 +162,16 @@ impl ICredentialProvider_Impl for RdpMfaProvider_Impl {
             *default = CREDENTIAL_PROVIDER_NO_DEFAULT;
             *autologon_with_default = false.into();
         }
+        log_event("GetCredentialCount", "count=1 default=none autologon=false");
         Ok(())
     }
 
     fn GetCredentialAt(&self, index: u32) -> Result<ICredentialProviderCredential> {
         if index != 0 {
+            log_event("GetCredentialAt", format!("invalid index={index}"));
             return Err(Error::from_hresult(E_INVALIDARG));
         }
+        log_event("GetCredentialAt", "returning credential index=0");
         Ok(RdpMfaCredential::new(Arc::clone(&self.state)).into())
     }
 }

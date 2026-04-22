@@ -6,6 +6,7 @@
 
 mod class_factory;
 mod credential;
+mod diagnostics;
 mod dll;
 mod fields;
 mod filter;

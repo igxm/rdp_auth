@@ -20,6 +20,7 @@ use windows::Win32::UI::Shell::{
 };
 use windows::core::{BOOL, Error, IUnknownImpl, PCWSTR, PWSTR, Ref, Result, implement};
 
+use crate::diagnostics::log_event;
 use crate::fields::MfaField;
 use crate::memory::alloc_wide_string;
 use crate::state::CredentialProviderState;
@@ -215,9 +216,27 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
 
         let mut state = self.state.lock().expect("credential state poisoned");
         match field {
-            MfaField::Phone => state.phone = value,
-            MfaField::SmsCode => state.sms_code = value,
-            MfaField::SecondPassword => state.second_password = value,
+            MfaField::Phone => {
+                log_event(
+                    "SetStringValue",
+                    format!("field=Phone chars={}", value.chars().count()),
+                );
+                state.phone = value;
+            }
+            MfaField::SmsCode => {
+                log_event(
+                    "SetStringValue",
+                    format!("field=SmsCode chars={}", value.chars().count()),
+                );
+                state.sms_code = value;
+            }
+            MfaField::SecondPassword => {
+                log_event(
+                    "SetStringValue",
+                    format!("field=SecondPassword chars={}", value.chars().count()),
+                );
+                state.second_password = value;
+            }
             _ => return Err(Error::from_hresult(E_INVALIDARG)),
         }
         Ok(())
@@ -237,6 +256,13 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
 
         let mut state = self.state.lock().expect("credential state poisoned");
         state.selected_method = method;
+        log_event(
+            "SetComboBoxSelectedValue",
+            format!(
+                "selected_method={:?} selected_item={}",
+                method, selected_item
+            ),
+        );
         state.status_message = match method {
             AuthMethod::PhoneCode => "请输入手机号并发送验证码".to_owned(),
             AuthMethod::SecondPassword => "请输入二次密码".to_owned(),
@@ -256,18 +282,27 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
         match field {
             MfaField::SendSms => {
                 if state.sms_resend_remaining > 0 {
+                    log_event(
+                        "CommandLinkClicked",
+                        format!("send_sms_ignored remaining={}", state.sms_resend_remaining),
+                    );
                     return Ok(());
                 }
                 // helper 接入前先只更新 UI 状态，不在 LogonUI 进程里做网络请求。
                 state.mfa_state = MfaState::WaitingInput;
                 state.sms_resend_remaining = 60;
                 state.status_message = "验证码已发送，请输入短信验证码".to_owned();
+                log_event("CommandLinkClicked", "send_sms_mock remaining=60");
                 drop(state);
                 self.refresh_visible_fields()
             }
             MfaField::Cancel => {
                 state.mfa_state = MfaState::Failed("用户取消二次认证".to_owned());
                 state.status_message = "已取消二次认证".to_owned();
+                log_event(
+                    "CommandLinkClicked",
+                    "cancel_clicked disconnect_current_session",
+                );
                 drop(state);
                 self.refresh_visible_fields()?;
                 // 取消按钮在 RDP 登录场景中应结束这次远程登录尝试。这里走
@@ -292,10 +327,32 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
         }
 
         let mut state = self.state.lock().expect("credential state poisoned");
+        log_event(
+            "GetSerialization",
+            format!(
+                "start mfa_state={:?} has_inbound={} allow_passthrough={} selected_method={:?}",
+                state.mfa_state,
+                state.has_inbound_serialization,
+                state.allow_passthrough_without_mfa,
+                state.selected_method
+            ),
+        );
         if !state.mfa_state.allows_serialization() && !state.allow_passthrough_without_mfa {
             match verify_mock_mfa(&mut state) {
-                Ok(()) => {}
+                Ok(()) => {
+                    log_event(
+                        "GetSerialization",
+                        format!("mock_verified selected_method={:?}", state.selected_method),
+                    );
+                }
                 Err(message) => {
+                    log_event(
+                        "GetSerialization",
+                        format!(
+                            "mock_rejected selected_method={:?} reason={}",
+                            state.selected_method, message
+                        ),
+                    );
                     unsafe {
                         // SAFETY: `response` 已做非空检查；mock 认证失败时不能交出凭证。
                         *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
@@ -314,6 +371,7 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
         let can_return =
             state.mfa_state.allows_serialization() || state.allow_passthrough_without_mfa;
         let Some(inbound) = state.inbound_serialization.as_ref().cloned() else {
+            log_event("GetSerialization", "missing_inbound_serialization");
             unsafe {
                 // SAFETY: `response` 已做非空检查；没有原始凭证时必须拒绝交出凭证。
                 *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
@@ -328,6 +386,7 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
         };
 
         if !can_return {
+            log_event("GetSerialization", "mfa_not_ready_no_credential");
             unsafe {
                 // SAFETY: `response` 已做非空检查；MFA 未通过时保持在当前 Tile。
                 *response = CPGSR_NO_CREDENTIAL_NOT_FINISHED;
@@ -339,6 +398,15 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
         // 正确边界是把序列化凭证交给 LogonUI/Winlogon，由系统继续交给 LSA；这样才能
         // 保持 Windows 登录审计、策略和错误处理都走系统原生链路。
         drop(state);
+        log_event(
+            "GetSerialization",
+            format!(
+                "returning_inbound auth_package={} source_provider={:?} bytes_len={}",
+                inbound.authentication_package,
+                inbound.source_provider,
+                inbound.bytes.len()
+            ),
+        );
         inbound.write_to(serialization)?;
         unsafe {
             // SAFETY: `response` 已做非空检查；`serialization` 已由 `write_to` 填充。
@@ -349,11 +417,18 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
 
     fn ReportResult(
         &self,
-        _status: NTSTATUS,
-        _sub_status: NTSTATUS,
+        status: NTSTATUS,
+        sub_status: NTSTATUS,
         _status_text: *mut PWSTR,
         _status_icon: *mut CREDENTIAL_PROVIDER_STATUS_ICON,
     ) -> Result<()> {
+        log_event(
+            "ReportResult",
+            format!(
+                "status=0x{:08X} sub_status=0x{:08X}",
+                status.0, sub_status.0
+            ),
+        );
         Ok(())
     }
 }
