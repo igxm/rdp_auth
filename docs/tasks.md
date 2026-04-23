@@ -177,8 +177,8 @@
 
 ## 阶段 5：本地 helper 与 IPC
 
-- [ ] 明确 helper 形态：`remote_auth` 是无 UI 的核心后台进程/服务，负责 IPC、session notification、配置解密、API、审计和内存态 session；不得依赖 Tauri、WebView2 或前端资源才能启动。
-- [ ] 明确 GUI 边界：后续 Tauri 仅作为独立管理员配置工具，通过 helper 管理 IPC 或 `register_tool` 能力读写配置和查询状态；Credential Provider 永远不直接调用 Tauri GUI。
+- [x] 明确 helper 形态：`remote_auth` 是无 UI 的核心后台进程/服务，负责 IPC、session notification、配置解密、API、审计和内存态 session；不得依赖 Tauri、WebView2 或前端资源才能启动。
+- [x] 明确 GUI 边界：后续 Tauri 仅作为独立管理员配置工具，通过 helper 管理 IPC 或 `register_tool` 能力读写配置和查询状态；Credential Provider 永远不直接调用 Tauri GUI。
 - [ ] `remote_auth` 启动命名管道服务。
 - [ ] 将 `remote_auth` 设计为可常驻的 helper 进程，后续可由安装工具注册启动路径；启动失败不能阻塞 LogonUI。
 - [x] helper 内存中维护 `SessionAuthState`，按 Windows session id 记录是否已成功完成 RDP MFA、最后更新时间、最近一次会话事件和诊断状态码，不保存用户名、密码、验证码、token 或 serialization。
@@ -209,8 +209,8 @@
 - [ ] 增加超时处理，避免 LogonUI 长时间无响应。
 - [x] helper 使用 `tracing` 输出结构化诊断日志，记录 helper 启动、请求类型、session、结果和 payload 状态；request_id、耗时和认证方式随审计上下文补齐。
 - [x] helper 使用 `anyhow` 作为入口层错误返回，IPC 协议错误使用 `thiserror` 定义可匹配类型；业务错误类型后续随真实 API 接入补齐。
-- [ ] 中文注释解释为何 CP DLL 不直接发网络请求。
-- [ ] 中文注释解释为何核心 helper 不做 Tauri GUI：登录链路需要服务化、短超时和低依赖，GUI 崩溃或 WebView2 缺失不得影响 RDP MFA fail closed 策略。
+- [x] 中文注释解释为何 CP DLL 不直接发网络请求。
+- [x] 中文注释解释为何核心 helper 不做 Tauri GUI：登录链路需要服务化、短超时和低依赖，GUI 崩溃或 WebView2 缺失不得影响 RDP MFA fail closed 策略。
 
 ## 阶段 6：配置读取
 
@@ -310,9 +310,9 @@
 
 ## 阶段 10A：Tauri 管理 GUI（后置运维工具）
 
-- [ ] 明确产品定位：Tauri GUI 是管理员登录桌面后的配置/运维工具，不参与 LogonUI、Credential Provider、Winlogon、LSA 或 RDP 断开决策。
-- [ ] 明确进程边界：核心 helper 继续以无 UI 进程/服务运行；Tauri GUI 独立启动、独立崩溃、独立升级，关闭 GUI 不影响 helper、CP 和 fail closed 策略。
-- [ ] 明确依赖边界：WebView2、前端资源、Tauri 插件、窗口事件循环和 GUI 自动更新都不得成为 RDP MFA 登录链路的前置依赖。
+- [x] 明确产品定位：Tauri GUI 是管理员登录桌面后的配置/运维工具，不参与 LogonUI、Credential Provider、Winlogon、LSA 或 RDP 断开决策。
+- [x] 明确进程边界：核心 helper 继续以无 UI 进程/服务运行；Tauri GUI 独立启动、独立崩溃、独立升级，关闭 GUI 不影响 helper、CP 和 fail closed 策略。
+- [x] 明确依赖边界：WebView2、前端资源、Tauri 插件、窗口事件循环和 GUI 自动更新都不得成为 RDP MFA 登录链路的前置依赖。
 - [ ] 新增独立 crate 或应用目录，例如 `crates/admin_gui` 或 `apps/admin_gui`，避免把 Tauri 配置、前端代码和后台 helper 主程序混在一起。
 - [ ] GUI 只通过受控管理接口操作配置：优先复用 `register_tool config import/export/status/health` 能力，或调用 helper 的管理员管理 IPC；不得直接写业务注册表项。
 - [ ] GUI 编辑配置时只生成临时明文 TOML 并立即导入加密 `.enc` 文件；界面和日志不得长期保存明文配置、机器码、API token、手机号、验证码、密码或 serialization。
@@ -480,4 +480,4 @@
 - [ ] 暂不主动调用 `LsaLogonUser`。
 - [ ] 暂不支持 Remote Credential Guard / Restricted Admin 的特殊凭证模型。
 - [ ] 暂不在第一阶段隐藏系统默认 Credential Provider。
-- [ ] 暂不把网络请求放进 Credential Provider DLL。
+- [x] 暂不把网络请求放进 Credential Provider DLL。

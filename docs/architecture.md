@@ -26,6 +26,17 @@ mstsc / RDP Client
             -> 本地脱敏日志
 ```
 
+`remote_auth.exe` 是无 UI 的核心后台 helper。它负责命名管道 IPC、Windows session
+notification、配置解密与聚合、真实认证 API、审计日志和内存态 session 状态。它不得依赖
+Tauri、WebView2、前端资源、窗口事件循环或 GUI 自动更新才能启动；后续安装器只能把这个核心
+helper 作为登录链路组件登记。
+
+后续 Tauri 管理 GUI 只定位为管理员进入桌面后的配置和运维工具。GUI 可以复用
+`register_tool config import/export/status/health`，或通过受控 helper 管理 IPC 查询状态和写入配置；
+它不参与 LogonUI、Credential Provider、Winlogon、LSA、RDP 断开决策或 fail closed 判断。GUI
+未安装、崩溃、升级失败或 WebView2/runtime 缺失时，核心 helper、CP 和 RDP MFA 登录链路必须继续按
+无 GUI 模式工作。
+
 ## 为什么 DLL 必须保持轻量
 
 Credential Provider DLL 运行在 LogonUI 相关进程内。网络超时、TLS 初始化、注册表异常、panic 或死锁都会影响 Windows 登录体验。因此 DLL 只做 UI、状态机、IPC 和原始凭证转交，复杂逻辑全部放入 `remote_auth.exe`。

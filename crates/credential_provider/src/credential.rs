@@ -386,7 +386,9 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
                     );
                     return Ok(());
                 }
-                // helper 接入前先只更新 UI 状态，不在 LogonUI 进程里做网络请求。
+                // helper 接入前先只更新 UI 状态，不在 LogonUI 进程里做网络请求。CP DLL
+                // 被 LogonUI 加载，网络超时、TLS 初始化或服务端卡顿都会卡住登录界面；真实短信发送必须
+                // 放到 remote_auth helper，通过短超时 IPC 返回可展示结果，失败时按 fail closed 处理。
                 state.mfa_state = MfaState::WaitingInput;
                 state.sms_resend_remaining = state.sms_resend_seconds;
                 state.sms_resend_generation = state.sms_resend_generation.wrapping_add(1);
