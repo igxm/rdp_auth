@@ -98,7 +98,8 @@ name = "auth_api"
 version = "0.1.0"
 dependencies = [
  "auth_config",
- "auth_core",
+ "thiserror",
+ "tracing",
 ]
 
 [[package]]

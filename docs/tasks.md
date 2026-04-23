@@ -265,7 +265,7 @@
 
 ## 阶段 7：真实服务端 API
 
-- [ ] `auth_api` 封装 HTTP client。
+- [x] `auth_api` 封装 HTTP client 配置、endpoint 拼接、超时配置和安全错误边界；真实 HTTP transport 待服务端接口确认后接入。
 - [ ] 实现 `POST /api/host_instance/getSSHLoginCode`。
 - [ ] 短信发送 API 请求携带 `host_public_ip`，并可携带 `client_ip`、`host_private_ips`、`host_uuid`、`session_id` 等审计上下文；服务端仍应以请求来源 IP 做可信校验。
 - [ ] 实现短信验证码校验接口，若路径未确定则先以配置项方式注入。
@@ -273,10 +273,10 @@
 - [ ] 实现 `POST /api/host_instance/postSSHLoginLog`。
 - [ ] 登录日志上报接口携带 client_ip、host_public_ip、host_private_ips、host_uuid、认证方式、认证结果和耗时，失败原因使用诊断码而不是敏感原文。
 - [ ] 实现远程配置拉取接口，例如 `GET /api/host_instance/config` 或等效路径，响应包含配置版本、TTL、策略内容和签名/校验字段。
-- [ ] 定义统一 API 错误码和用户提示文案。
-- [ ] 所有请求设置连接超时和总超时。
+- [x] 定义统一 API 错误码和用户提示文案。
+- [x] 所有 API client 请求配置连接超时和总超时；真实 HTTP transport 接入时必须使用该配置。
 - [ ] 所有日志脱敏手机号、验证码、密码、token。
-- [ ] `auth_api` 使用 `thiserror` 定义 API 错误类型，区分网络错误、HTTP 状态错误、服务端业务错误、响应解析错误和超时错误。
+- [x] `auth_api` 使用 `thiserror` 定义 API 错误类型，区分网络错误、HTTP 状态错误、服务端业务错误、响应解析错误和超时错误。
 - [ ] API 调用使用 `tracing` 记录脱敏请求上下文、耗时、HTTP 状态码和服务端错误码，禁止记录 token、验证码、密码和原始响应中的敏感字段。
 - [ ] 中文注释说明每个 API 的用途、入参来源和失败策略。
 
@@ -388,7 +388,7 @@
 - [x] 单元测试：Kerberos interactive packed buffer 使用相对偏移保存域、用户名、密码，并按 usage scenario 选择正确 message type。
 - [x] 单元测试：IPC 请求响应序列化。
 - [ ] 单元测试：注册表配置解析。
-- [ ] 单元测试：API 错误映射。
+- [x] 单元测试：API 错误映射。
 - [x] 单元测试：`thiserror` IPC 编解码错误能稳定映射到用户可见文案。
 - [x] 单元测试：日志脱敏函数会过滤手机号、验证码、密码、token、serialization 字节和换行符。
 - [ ] 集成测试：`tracing-appender` 日志能写入 `C:\ProgramData\rdp_auth\logs` 并按配置轮转。
