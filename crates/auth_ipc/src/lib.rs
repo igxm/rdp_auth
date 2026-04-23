@@ -176,7 +176,7 @@ mod tests {
                 masked_phone: Some("138****8888".to_owned()),
                 phone_editable: false,
                 mfa_timeout_seconds: 120,
-                sms_resend_seconds: 300,
+                sms_resend_seconds: 60,
             }),
         );
         let json = response.to_json().unwrap();

@@ -281,7 +281,7 @@ mod tests {
         let state = CredentialProviderState::default();
         assert_eq!(state.mfa_timeout_seconds, 120);
         assert_eq!(state.missing_serialization_grace_seconds, 1);
-        assert_eq!(state.sms_resend_seconds, 300);
+        assert_eq!(state.sms_resend_seconds, 60);
         assert_eq!(state.helper_ipc_timeout_ms, 300);
         assert!(state.disconnect_when_missing_serialization);
         assert_eq!(state.timeout_generation, 0);

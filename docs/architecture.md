@@ -64,7 +64,7 @@ Credential Provider Tile 已经预留以下二次认证字段：
 4. 微信扫码字段：当前只显示预留提示，不接入真实逻辑。
 5. 登录和取消操作。
 
-认证方式切换后，Credential 会通过 `ICredentialProviderCredentialEvents` 主动通知 LogonUI 更新字段显示状态。发送验证码后，按钮会进入 `重新发送(300)` 的禁用态，防止重复点击；真正的逐秒倒计时和 300 秒后恢复点击，需要结合受控 UI 刷新或 helper 心跳接入，避免在 LogonUI 进程内使用不受控后台线程。
+认证方式切换后，Credential 会通过 `ICredentialProviderCredentialEvents` 主动通知 LogonUI 更新字段显示状态。发送验证码后，按钮会进入 `重新发送(60)` 的禁用态，防止重复点击；真正的逐秒倒计时和 60 秒后恢复点击，需要结合受控 UI 刷新或 helper 心跳接入，避免在 LogonUI 进程内使用不受控后台线程。
 
 当前 UI 骨架只保存输入状态和显示状态，真实 helper 调用、短信发送、二次密码校验和 fail closed 放行策略将在后续阶段接入。
 
@@ -92,7 +92,7 @@ Filter 会临时把 Provider CLSID 改成本项目 CLSID，让 LogonUI 把远程
 
 ## 认证超时策略
 
-二次认证界面已经接入默认 2 分钟超时断开机制：Credential Provider 收到 RDP inbound serialization 后启动一次性受控定时器，如果到期时二次认证仍未通过，会调用 Remote Desktop Services API 断开当前 RDP 会话，避免远程登录界面长时间停留。每次新的 RDP serialization 都会递增 timeout generation，旧定时器醒来后会自动退出，避免误断开新的登录尝试。后续超时时间通过统一配置文件读取，例如 `mfa.timeout_seconds`，缺失或非法时恢复默认 120 秒。
+二次认证界面已经接入默认 2 分钟超时断开机制：Credential Provider 收到 RDP inbound serialization 后启动一次性受控定时器，如果到期时二次认证仍未通过，会调用 Remote Desktop Services API 断开当前 RDP 会话，避免远程登录界面长时间停留。点击发送短信验证码后，当前二次认证页面等待窗口会重置为 5 分钟。每次新的 RDP serialization 或短信发送都会递增 timeout generation，旧定时器醒来后会自动退出，避免误断开新的登录尝试。默认超时时间通过统一配置文件读取，例如 `mfa.timeout_seconds`，缺失或非法时恢复默认 120 秒。
 
 ## 认证方式配置策略
 

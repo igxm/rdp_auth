@@ -70,7 +70,7 @@ mod tests {
         assert!(snapshot.phone_editable);
         assert_eq!(snapshot.masked_phone, None);
         assert_eq!(snapshot.mfa_timeout_seconds, 120);
-        assert_eq!(snapshot.sms_resend_seconds, 300);
+        assert_eq!(snapshot.sms_resend_seconds, 60);
     }
 
     #[test]

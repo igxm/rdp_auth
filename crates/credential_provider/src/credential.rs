@@ -27,9 +27,11 @@ use crate::helper_client::{log_mark_result, mark_current_session_authenticated};
 use crate::memory::alloc_wide_string;
 use crate::session::disconnect_current_session;
 use crate::state::{CredentialProviderState, RDP_MFA_PROVIDER_CLSID};
+use crate::timeout::start_mfa_timeout_timer;
 
 const MOCK_SMS_CODE: &str = "123456";
 const MOCK_SECOND_PASSWORD: &str = "mock-password";
+const SMS_SENT_MFA_TIMEOUT_SECONDS: u64 = 300;
 
 /// 最小 Credential 对象。
 #[implement(ICredentialProviderCredential)]
@@ -395,20 +397,18 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
                 // helper 接入前先只更新 UI 状态，不在 LogonUI 进程里做网络请求。CP DLL
                 // 被 LogonUI 加载，网络超时、TLS 初始化或服务端卡顿都会卡住登录界面；真实短信发送必须
                 // 放到 remote_auth helper，通过短超时 IPC 返回可展示结果，失败时按 fail closed 处理。
-                state.mfa_state = MfaState::WaitingInput;
-                state.sms_resend_remaining = state.sms_resend_seconds;
-                state.sms_resend_generation = state.sms_resend_generation.wrapping_add(1);
-                if state.sms_resend_generation == 0 {
-                    state.sms_resend_generation = 1;
-                }
-                let generation = state.sms_resend_generation;
-                let remaining = state.sms_resend_remaining;
-                state.status_message = "验证码已发送，请输入短信验证码".to_owned();
+                let (generation, remaining) = prepare_send_sms_state(&mut state);
                 log_event(
                     "CommandLinkClicked",
-                    format!("send_sms_mock remaining={remaining} generation={generation}"),
+                    format!(
+                        "send_sms_mock remaining={remaining} generation={generation} mfa_timeout_seconds={}",
+                        state.mfa_timeout_seconds
+                    ),
                 );
                 drop(state);
+                // 发送验证码后用户需要等待短信到达并输入验证码，因此当前 MFA 页面等待窗口
+                // 重置为 5 分钟。这里重启受控超时定时器，让旧 generation 自动失效；CP 仍不发网络请求。
+                start_mfa_timeout_timer(Arc::clone(&self.state));
                 self.refresh_visible_fields()?;
                 self.start_sms_resend_countdown(generation);
                 Ok(())
@@ -696,6 +696,18 @@ fn verify_mock_mfa(state: &mut CredentialProviderState) -> std::result::Result<(
     }
 }
 
+fn prepare_send_sms_state(state: &mut CredentialProviderState) -> (u64, u32) {
+    state.mfa_state = MfaState::WaitingInput;
+    state.mfa_timeout_seconds = SMS_SENT_MFA_TIMEOUT_SECONDS;
+    state.sms_resend_remaining = state.sms_resend_seconds;
+    state.sms_resend_generation = state.sms_resend_generation.wrapping_add(1);
+    if state.sms_resend_generation == 0 {
+        state.sms_resend_generation = 1;
+    }
+    state.status_message = "验证码已发送，请输入短信验证码".to_owned();
+    (state.sms_resend_generation, state.sms_resend_remaining)
+}
+
 fn send_sms_label_owned(state: &CredentialProviderState) -> String {
     if state.sms_resend_remaining > 0 {
         format!("重新发送({})", state.sms_resend_remaining)
@@ -726,7 +738,7 @@ fn wide_null(value: &str) -> Vec<u16> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MOCK_SECOND_PASSWORD, MOCK_SMS_CODE, verify_mock_mfa};
+    use super::{MOCK_SECOND_PASSWORD, MOCK_SMS_CODE, prepare_send_sms_state, verify_mock_mfa};
     use super::{
         auth_method_index, auth_method_selected_index, field_visibility, send_sms_label_owned,
     };
@@ -804,13 +816,26 @@ mod tests {
     #[test]
     fn sms_button_is_disabled_during_resend_window() {
         let mut state = CredentialProviderState::default();
-        state.sms_resend_remaining = 300;
+        state.sms_resend_remaining = 60;
 
-        assert_eq!(send_sms_label_owned(&state), "重新发送(300)");
+        assert_eq!(send_sms_label_owned(&state), "重新发送(60)");
         assert_eq!(
             field_visibility(MfaField::SendSms, &state).1,
             CPFIS_DISABLED
         );
+    }
+
+    #[test]
+    fn send_sms_extends_current_mfa_timeout_to_five_minutes() {
+        let mut state = CredentialProviderState::default();
+
+        let (generation, remaining) = prepare_send_sms_state(&mut state);
+
+        assert_eq!(generation, 1);
+        assert_eq!(remaining, 60);
+        assert_eq!(state.sms_resend_remaining, 60);
+        assert_eq!(state.mfa_timeout_seconds, 300);
+        assert_eq!(state.mfa_state, MfaState::WaitingInput);
     }
 
     #[test]
