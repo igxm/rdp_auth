@@ -16,6 +16,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// 配置层可匹配错误。Display 文案必须安全，不包含机器码、完整手机号、API token 或明文配置。
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("配置文件缺失: {path}")]
+    ConfigMissing { path: PathBuf },
     #[error("{action}，是否使用管理员运行")]
     Registry {
         action: &'static str,

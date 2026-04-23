@@ -148,11 +148,19 @@ pub fn load_app_config() -> AppConfig {
 /// 明文只允许在管理员显式维护时短暂出现，调用方不得把返回内容写入诊断日志。
 pub fn export_app_config_toml() -> Result<String> {
     let path = load_config_path();
-    let protected_bytes =
-        std::fs::read(&path).map_err(|error| Error::file("读取加密配置失败", &path, error))?;
+    let protected_bytes = read_encrypted_config_bytes(&path)?;
     let (plaintext, _) = unprotect_config_bytes(&protected_bytes)?;
     let content = String::from_utf8(plaintext).map_err(Error::Utf8)?;
     normalize_config_toml(&content)
+}
+
+fn read_encrypted_config_bytes(path: &Path) -> Result<Vec<u8>> {
+    std::fs::read(path).map_err(|error| match error.kind() {
+        std::io::ErrorKind::NotFound => Error::ConfigMissing {
+            path: path.to_path_buf(),
+        },
+        _ => Error::file("读取加密配置失败", path, error),
+    })
 }
 
 pub fn export_app_config_toml_to_path(output_path: &Path) -> Result<()> {
@@ -290,7 +298,11 @@ fn sibling_path_with_suffix(path: &Path, suffix: &str) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{next_available_backup_path, normalize_config_toml, replace_encrypted_config};
+    use super::{
+        next_available_backup_path, normalize_config_toml, read_encrypted_config_bytes,
+        replace_encrypted_config,
+    };
+    use crate::Error;
     use std::fs;
 
     #[test]
@@ -332,6 +344,20 @@ timeout_seconds = 180
         let error = normalize_config_toml("schema_version = \"bad\"").unwrap_err();
         assert!(error.to_string().contains("TOML"));
         assert!(!error.to_string().contains("schema_version"));
+    }
+
+    #[test]
+    fn missing_encrypted_config_returns_structured_error() {
+        let path = std::env::temp_dir().join(format!(
+            "rdp_auth_missing_config_test_{}\\rdp_auth.toml.enc",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&path);
+
+        let error = read_encrypted_config_bytes(&path).unwrap_err();
+
+        assert!(matches!(error, Error::ConfigMissing { .. }));
+        assert!(error.to_string().contains("配置文件缺失"));
     }
 
     #[test]
