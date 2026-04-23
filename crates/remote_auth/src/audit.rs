@@ -24,7 +24,7 @@ impl AuditContext {
             session_id,
             client_ip: "unknown".to_owned(),
             host_public_ip: "unknown".to_owned(),
-            host_private_ips: vec!["unknown".to_owned()],
+            host_private_ips: crate::host_network::host_private_ip_strings(),
             host_uuid: "unknown".to_owned(),
             method,
         }

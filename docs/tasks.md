@@ -204,7 +204,7 @@
 - [x] helper 实现配置手机号读取和校验：读取解密配置中的 `phone.number`，校验 `^1[3-9]\d{9}$`，只向 CP 返回脱敏手机号和不可编辑标记，日志不得记录完整手机号。
 - [x] helper 为每次 MFA 请求生成审计上下文 `AuditContext`：包含 request_id、session_id、client_ip、host_public_ip、host_private_ips、host_uuid 和认证方式。
 - [ ] helper 采集 RDP 连接用户 IP：优先按当前 Windows session 查询客户端地址；采集失败时填充 `unknown`，并记录脱敏诊断原因。
-- [ ] helper 采集本机内网 IP 列表：枚举活动网卡，过滤 loopback、link-local、未启用网卡和明显无效地址，支持多网卡多 IP。
+- [x] helper 采集本机内网 IP 列表：枚举活动网卡，过滤 loopback、link-local、未启用网卡和明显无效地址，支持多网卡多 IP；失败或无可用内网地址时回退为 `unknown`。
 - [ ] helper 获取本机公网 IP：优先调用自家服务端公网 IP 查询接口；失败时填充 `unknown`，默认不阻断短信发送，除非远程策略要求 fail closed。
 - [x] helper 返回短信发送成功后，驱动 CP 进入 60 秒重新发送倒计时。（helper 已返回成功响应；CP 通过命名管道接入后使用该响应启动倒计时）
 - [x] 支持 `verify_sms` 请求。
@@ -387,7 +387,7 @@
 - [x] 单元测试：helper 策略快照在配置手机号模式下只返回脱敏手机号，且手机号字段不可编辑。
 - [x] 单元测试：手动输入手机号模式下，手机号不合法时禁止发送验证码并显示错误提示。
 - [x] 单元测试：`get_policy_snapshot` 不包含配置模式真实手机号，只包含脱敏手机号、字段可编辑状态和策略来源。
-- [ ] 单元测试：本机内网 IP 枚举会过滤 loopback、link-local、未启用网卡，并保留多网卡有效地址。
+- [x] 单元测试：本机内网 IP 枚举会过滤 loopback、link-local、公网地址和明显无效地址，并保留多网卡有效内网地址。
 - [ ] 单元测试：公网 IP 获取失败时按策略返回 `unknown` 或 fail closed。
 - [x] 单元测试：审计日志字段序列化包含 client_ip、host_public_ip、host_private_ips、host_uuid、session_id，且不包含手机号、验证码、密码、token。
 - [x] 单元测试：远程配置版本、TTL、签名/校验字段解析，非法配置不能覆盖本地有效配置。

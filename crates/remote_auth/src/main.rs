@@ -5,6 +5,7 @@
 
 mod audit;
 mod diagnostics;
+mod host_network;
 mod mfa;
 mod pipe_server;
 mod policy;
