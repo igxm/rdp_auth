@@ -1,15 +1,15 @@
 //! Credential Provider 调用 helper 的短超时 IPC 客户端。
 //!
 //! CP 运行在 LogonUI 相关进程内，任何 helper 调用都只能是短小、可失败、可回退的动作。
-//! 这里先实现 `ReportResult status=0` 后的 session 已认证通知：helper 不可用时只写脱敏日志，
-//! 不影响 Windows 已经完成的登录结果。
+//! 这里实现 session 状态相关的最小 IPC：`ReportResult status=0` 后通知 helper 标记当前
+//! session，以及缺失 inbound serialization 时查询 helper 是否记得该 session 已认证。
 
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use auth_ipc::IpcRequest;
+use auth_ipc::{IpcRequest, IpcResponse, IpcResponsePayload, SessionStateResponse};
 
 use crate::diagnostics::log_event;
 use crate::session::current_session_id;
@@ -23,6 +23,11 @@ pub enum HelperClientError {
     Serialize(auth_ipc::Error),
     Open(std::io::Error),
     Write(std::io::Error),
+    Read(std::io::Error),
+    Deserialize(auth_ipc::Error),
+    ResponseFailed,
+    MissingPayload,
+    UnexpectedPayload,
 }
 
 impl std::fmt::Display for HelperClientError {
@@ -32,6 +37,13 @@ impl std::fmt::Display for HelperClientError {
             Self::Serialize(error) => write!(formatter, "serialize_request_failed error={error}"),
             Self::Open(error) => write!(formatter, "open_helper_pipe_failed error={error}"),
             Self::Write(error) => write!(formatter, "write_helper_pipe_failed error={error}"),
+            Self::Read(error) => write!(formatter, "read_helper_pipe_failed error={error}"),
+            Self::Deserialize(error) => {
+                write!(formatter, "deserialize_response_failed error={error}")
+            }
+            Self::ResponseFailed => write!(formatter, "helper_response_failed"),
+            Self::MissingPayload => write!(formatter, "helper_response_missing_payload"),
+            Self::UnexpectedPayload => write!(formatter, "helper_response_unexpected_payload"),
         }
     }
 }
@@ -39,24 +51,47 @@ impl std::fmt::Display for HelperClientError {
 /// 通知 helper 当前 Windows session 已完成 MFA。
 pub fn mark_current_session_authenticated(timeout: Duration) -> Result<(), HelperClientError> {
     let session_id = current_session_id().map_err(HelperClientError::SessionId)?;
-    send_helper_notification(mark_session_authenticated_request(session_id), timeout)
+    send_helper_request(mark_session_authenticated_request(session_id), timeout).map(|_| ())
 }
 
-fn send_helper_notification(
+/// 查询 helper 是否仍持有当前 session 的已认证标记。
+///
+/// 该结果只能用于选择缺失 serialization 的等待/断开策略，不能作为放行登录的依据；
+/// `GetSerialization` 仍必须等 MFA 成功并持有 inbound serialization 后才返回凭证。
+pub fn has_current_session_authenticated(
+    timeout: Duration,
+) -> Result<SessionStateResponse, HelperClientError> {
+    let session_id = current_session_id().map_err(HelperClientError::SessionId)?;
+    query_session_authenticated_request(session_id, timeout)
+}
+
+fn send_helper_request(
     request: IpcRequest,
     timeout: Duration,
-) -> Result<(), HelperClientError> {
+) -> Result<IpcResponse, HelperClientError> {
     let request_json = request.to_json().map_err(HelperClientError::Serialize)?;
     let deadline = Instant::now() + timeout;
 
     loop {
-        match OpenOptions::new().write(true).open(HELPER_PIPE_PATH) {
+        match OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(HELPER_PIPE_PATH)
+        {
             Ok(mut pipe) => {
                 pipe.write_all(request_json.as_bytes())
                     .and_then(|_| pipe.write_all(b"\n"))
                     .and_then(|_| pipe.flush())
                     .map_err(HelperClientError::Write)?;
-                return Ok(());
+                let mut response_json = String::new();
+                pipe.read_to_string(&mut response_json)
+                    .map_err(HelperClientError::Read)?;
+                let response = IpcResponse::from_json(response_json.trim())
+                    .map_err(HelperClientError::Deserialize)?;
+                if response.ok {
+                    return Ok(response);
+                }
+                return Err(HelperClientError::ResponseFailed);
             }
             Err(error) => {
                 if Instant::now() >= deadline {
@@ -72,6 +107,19 @@ fn mark_session_authenticated_request(session_id: u32) -> IpcRequest {
     IpcRequest::MarkSessionAuthenticated { session_id }
 }
 
+fn query_session_authenticated_request(
+    session_id: u32,
+    timeout: Duration,
+) -> Result<SessionStateResponse, HelperClientError> {
+    let response =
+        send_helper_request(IpcRequest::HasAuthenticatedSession { session_id }, timeout)?;
+    match response.payload {
+        Some(IpcResponsePayload::SessionState(state)) => Ok(state),
+        Some(_) => Err(HelperClientError::UnexpectedPayload),
+        None => Err(HelperClientError::MissingPayload),
+    }
+}
+
 /// 记录 helper 通知结果。调用方保持主流程继续，由这里集中保证日志脱敏。
 pub fn log_mark_result(result: Result<(), HelperClientError>) {
     match result {
@@ -85,8 +133,8 @@ pub fn log_mark_result(result: Result<(), HelperClientError>) {
 
 #[cfg(test)]
 mod tests {
-    use super::mark_session_authenticated_request;
-    use auth_ipc::IpcRequest;
+    use super::{HelperClientError, mark_session_authenticated_request};
+    use auth_ipc::{IpcRequest, IpcResponse, IpcResponsePayload, SessionStateResponse};
 
     #[test]
     fn builds_mark_session_authenticated_request() {
@@ -101,6 +149,51 @@ mod tests {
                 .to_json()
                 .unwrap()
                 .contains("mark_session_authenticated")
+        );
+    }
+
+    #[test]
+    fn builds_has_authenticated_session_request() {
+        let request = IpcRequest::HasAuthenticatedSession { session_id: 7 };
+
+        assert!(
+            request
+                .to_json()
+                .unwrap()
+                .contains("has_authenticated_session")
+        );
+        assert_eq!(
+            IpcRequest::from_json(&request.to_json().unwrap()).unwrap(),
+            request
+        );
+    }
+
+    #[test]
+    fn decodes_session_state_response_without_sensitive_payload() {
+        let response = IpcResponse::success_with_payload(
+            "session 状态已返回",
+            IpcResponsePayload::SessionState(SessionStateResponse {
+                session_id: 7,
+                authenticated: true,
+                ttl_remaining_seconds: Some(30),
+            }),
+        );
+        let json = response.to_json().unwrap();
+
+        assert!(json.contains("session_state"));
+        assert!(!json.contains("password"));
+        assert!(!json.contains("serialization"));
+    }
+
+    #[test]
+    fn response_errors_do_not_format_sensitive_payloads() {
+        assert_eq!(
+            HelperClientError::UnexpectedPayload.to_string(),
+            "helper_response_unexpected_payload"
+        );
+        assert_eq!(
+            HelperClientError::MissingPayload.to_string(),
+            "helper_response_missing_payload"
         );
     }
 }

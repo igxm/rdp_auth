@@ -11,6 +11,7 @@ use std::time::Duration;
 use auth_core::MfaState;
 
 use crate::diagnostics::log_event;
+use crate::helper_client::has_current_session_authenticated;
 use crate::session::disconnect_current_session;
 use crate::state::CredentialProviderState;
 
@@ -84,7 +85,7 @@ pub fn start_mfa_timeout_timer(state: Arc<Mutex<CredentialProviderState>>) {
 }
 
 pub fn start_missing_serialization_disconnect_timer(state: Arc<Mutex<CredentialProviderState>>) {
-    let (generation, grace_seconds, disconnect_when_missing_serialization) = {
+    let (generation, grace_seconds, helper_ipc_timeout_ms, disconnect_when_missing_serialization) = {
         let mut state = state.lock().expect("provider state poisoned");
         state.timeout_generation = state.timeout_generation.wrapping_add(1);
         if state.timeout_generation == 0 {
@@ -93,6 +94,7 @@ pub fn start_missing_serialization_disconnect_timer(state: Arc<Mutex<CredentialP
         (
             state.timeout_generation,
             state.missing_serialization_grace_seconds,
+            state.helper_ipc_timeout_ms,
             state.disconnect_when_missing_serialization,
         )
     };
@@ -114,8 +116,8 @@ pub fn start_missing_serialization_disconnect_timer(state: Arc<Mutex<CredentialP
         .name("rdp_auth_missing_serialization".to_owned())
         .spawn(move || {
             thread::sleep(Duration::from_secs(grace_seconds));
-            let should_disconnect = {
-                let mut state = state.lock().expect("provider state poisoned");
+            let should_query_helper = {
+                let state = state.lock().expect("provider state poisoned");
                 if state.timeout_generation != generation {
                     log_event(
                         "MissingSerialization",
@@ -129,6 +131,50 @@ pub fn start_missing_serialization_disconnect_timer(state: Arc<Mutex<CredentialP
                     log_event(
                         "MissingSerialization",
                         format!("inbound_arrived generation={generation}"),
+                    );
+                    false
+                } else {
+                    true
+                }
+            };
+
+            if !should_query_helper {
+                return;
+            }
+
+            // helper 查询只能辅助判断“这是已认证会话返回 LogonUI，还是首次登录 serialization 慢到”。
+            // 查询失败、超时或非法响应都不能放行；这里统一继续 fail closed 断开。
+            let helper_status =
+                has_current_session_authenticated(Duration::from_millis(helper_ipc_timeout_ms));
+            match helper_status {
+                Ok(session) => log_event(
+                    "MissingSerialization",
+                    format!(
+                        "helper_session_state authenticated={} ttl_remaining_seconds={:?}",
+                        session.authenticated, session.ttl_remaining_seconds
+                    ),
+                ),
+                Err(error) => log_event(
+                    "MissingSerialization",
+                    format!("helper_session_state_failed error={error}"),
+                ),
+            }
+
+            let should_disconnect = {
+                let mut state = state.lock().expect("provider state poisoned");
+                if state.timeout_generation != generation {
+                    log_event(
+                        "MissingSerialization",
+                        format!(
+                            "timer_stale_after_helper generation={} current_generation={}",
+                            generation, state.timeout_generation
+                        ),
+                    );
+                    false
+                } else if state.has_inbound_serialization {
+                    log_event(
+                        "MissingSerialization",
+                        format!("inbound_arrived_after_helper generation={generation}"),
                     );
                     false
                 } else {

@@ -73,7 +73,7 @@
 - [ ] 增加按 session 区分的轻量历史状态标记：`ReportResult status=0` 后记录当前 session 曾成功完成 RDP MFA，用于区分“首次登录 serialization 慢到”和“已登录会话锁屏/注销后返回 LogonUI”。
 - [ ] 历史状态标记的目标实现放在 helper 内存中维护，不写注册表、不写状态文件；Credential Provider 只通过短超时 IPC 查询和更新。
 - [x] helper 通过 Windows session notification 监听 session lock、unlock、disconnect、logoff 等事件，维护 session 内存状态并及时清理，Credential Provider 不直接监听 Win+L 事件。
-- [ ] 如果 helper 不可用或 IPC 超时，Credential Provider 不得因此放行；回退到现有缺失 serialization 等待窗口和 fail closed 断开策略。
+- [x] 如果 helper 不可用或 IPC 超时，Credential Provider 不得因此放行；回退到现有缺失 serialization 等待窗口和 fail closed 断开策略。
 - [ ] 缺失 serialization 保护按上下文使用不同等待窗口：已有成功会话返回 LogonUI 时使用短窗口，疑似首次登录时使用较宽松窗口，避免误断正常 RDP 登录。
 - [x] 将缺失 serialization 等待窗口改为统一配置项，例如 `mfa.missing_serialization_grace_seconds`，缺失或非法时使用安全默认值。
 - [ ] 日志补齐场景链路：记录 `SetUsageScenario`、`Filter`、`UpdateRemoteCredential`、`GetCredentialCount`、`GetCredentialAt`、`SetSerialization`、`MissingSerialization`、`MfaTimeout`、`GetSerialization`、`ReportResult` 的关键脱敏字段。
@@ -193,7 +193,7 @@
 - [x] `credential_provider` 在 `ReportResult status=0` 后按 `mfa.helper_ipc_timeout_ms` 尝试通过短超时 helper IPC 写入 `mark_session_authenticated` 请求；helper 不可用时只记录脱敏诊断日志，不影响 LogonUI。
 - [x] `auth_ipc` 增加 `has_authenticated_session` 请求：Credential Provider 在 RDP 会话无 inbound serialization 时查询 helper，命中则直接走短等待/立即断开策略。
 - [x] `auth_ipc` 增加 `clear_session_state` 请求：Credential Provider 或 register_tool 可请求清理指定 session 状态，用于断开、卸载或异常恢复。
-- [ ] 所有 session 状态 IPC 必须设置极短超时；helper 不可用、超时或返回非法响应时，Credential Provider 回退到 fail closed 策略，不得放行。
+- [x] 所有 session 状态 IPC 必须设置极短超时；helper 不可用、超时或返回非法响应时，Credential Provider 回退到 fail closed 策略，不得放行。
 - [x] IPC 响应只返回布尔值、状态码、TTL/时间戳等非敏感信息，不返回用户标识、手机号、密码或原始凭证材料。
 - [x] 支持 `get_policy_snapshot` 请求：helper 读取本地配置和必要文件后，返回 CP 可渲染的脱敏策略快照，包括认证方式列表、手机号来源、脱敏手机号、手机号字段是否可编辑和超时配置；远程配置和用户可见提示待后续扩展协议字段。
 - [x] 支持 `send_sms` 请求。
@@ -377,6 +377,7 @@
 - [x] 单元测试：Credential Provider 侧 `ReportResult` 使用的 `mark_session_authenticated` helper IPC 请求构造稳定，且只包含 session id。
 - [x] 单元测试：helper 命名管道 transport 可以把单条 JSON 请求路由到 session 状态，并拒绝非法请求且不回显敏感字段。
 - [x] 单元测试：helper Windows session notification 映射 lock/unlock/disconnect/logoff/session end 事件，并只更新内存 session 状态。
+- [x] 单元测试：Credential Provider 侧 `has_authenticated_session` helper IPC 请求和响应解析稳定，且只使用非敏感 session 状态 payload。
 - [x] 单元测试：手机号校验规则，合法手机号满足 `^1[3-9]\d{9}$`，非法手机号被拒绝。
 - [x] 单元测试：手机号脱敏规则，`13812348888` 显示为 `138****8888`，非法手机号显示为安全占位文案。
 - [x] 单元测试：helper 文件读取手机号模式会让 CP 禁用手机号输入框，并且 UI 只显示脱敏手机号。
@@ -448,7 +449,7 @@
 - [ ] CP 与 helper IPC 增加调用方校验或权限控制。
 - [x] helper session 内存状态只保存 session id、状态枚举、时间戳和脱敏诊断码，不保存用户名、手机号、密码、验证码、token 或 serialization。
 - [x] helper session 状态必须随 logoff/disconnect/session end/TTL 过期清理，避免 Windows session id 复用导致错误断开。
-- [ ] CP 查询 helper session 状态时必须设置短超时，helper 异常时默认 fail closed，不能因为状态服务不可用而绕过 MFA。
+- [x] CP 查询 helper session 状态时必须设置短超时，helper 异常时默认 fail closed，不能因为状态服务不可用而绕过 MFA。
 - [ ] Tauri 管理 GUI 不得持有 Windows 一次登录密码、RDP serialization、验证码、二次密码、API token 或机器码；所有配置写入必须经加密层和权限校验。
 - [ ] Tauri 管理 GUI 的安装、缺失、崩溃、升级失败或 WebView2/runtime 异常不得影响 CP/helper 的登录链路、session 状态清理和 fail closed 策略。
 - [ ] 默认 fail closed：二次认证服务不可用时拒绝放行。
