@@ -37,6 +37,7 @@ cargo test --workspace
 - helper 返回非法 JSON 时，CP 走 fail closed，不放行。
 - helper 不可用、命名管道不存在或 IPC 超时时，CP 不长时间阻塞 LogonUI。
 - `get_policy_snapshot` 返回认证方式列表、手机号来源、脱敏手机号、字段可编辑状态和超时配置；响应不得包含完整手机号。
+- Credential Provider 枚举 Tile 前会用短超时读取 `get_policy_snapshot`；helper 不可用时应回退本地安全默认值，不能卡住 LogonUI，也不能放行未通过 MFA 的登录。
 
 ## 后续 VM 测试
 
@@ -72,6 +73,15 @@ Windows session notification 接入后，在 VM 中验证：
 2. 重复 RDP + NLA + mock MFA 登录。
 3. 确认 CP 日志出现 `HelperIpc mark_session_authenticated_ok`。
 4. 查询 helper 内存态 session，确认同一 session id 的 `has_authenticated_session` 为 true，TTL 剩余时间不为空。
+
+验证策略快照会影响 CP UI，且不泄漏真实手机号：
+
+1. 在 VM 快照中通过 `register_tool config export` 导出配置，修改为 `phone.source = "file"`，并设置 `phone.file_path = "C:\\ProgramData\\rdp_auth\\phone.txt"`。
+2. 在 `C:\ProgramData\rdp_auth\phone.txt` 写入测试手机号，例如 `13812348888`，再通过 `register_tool config import` 导入配置。
+3. 启动 `remote_auth` 常驻 helper，确认它输出 `remote_auth helper 已启动`。
+4. 通过 RDP + NLA 进入 Credential Provider Tile，确认手机号字段显示为 `138****8888` 且不可编辑。
+5. 检查 CP 和 helper 诊断日志，只允许出现脱敏手机号或长度/布尔状态，不得出现完整手机号、用户名、密码、验证码、token 或 serialization。
+6. 停止 helper 后重复进入 Tile，确认 LogonUI 不长时间卡住，CP 使用本地安全默认策略继续显示认证方式，并且未完成 MFA 时仍不会放行。
 
 ## 安全边界
 

@@ -35,7 +35,7 @@
 - [x] 明确边界：Credential Provider DLL 只消费 helper 通过 IPC 返回的策略快照，例如可用认证方式、手机号显示值、手机号是否可编辑、超时时间和错误提示。
 - [ ] helper 负责读取和校验手机号文件、远程配置缓存、`reginfo.ini`、公网 IP endpoint、认证方式开关和超时策略，并把结果转换为 CP 可直接渲染的脱敏策略。
 - [x] helper 下发给 CP 的手机号策略只允许包含脱敏展示值和是否可编辑标记；真实手机号仅在 helper 内存中用于发送短信请求，不回传给 CP 日志。
-- [ ] CP 与 helper IPC 增加 `get_policy_snapshot` 或等效请求，CP 初始化和刷新 UI 时通过该请求获取认证方式、手机号来源、脱敏手机号、字段可编辑状态和超时配置。
+- [x] CP 与 helper IPC 增加 `get_policy_snapshot` 或等效请求，CP 初始化和刷新 UI 时通过该请求获取认证方式、手机号来源、脱敏手机号、字段可编辑状态和超时配置。
 
 ## 日志与错误处理技术选型
 
@@ -378,6 +378,7 @@
 - [x] 单元测试：helper 命名管道 transport 可以把单条 JSON 请求路由到 session 状态，并拒绝非法请求且不回显敏感字段。
 - [x] 单元测试：helper Windows session notification 映射 lock/unlock/disconnect/logoff/session end 事件，并只更新内存 session 状态。
 - [x] 单元测试：Credential Provider 侧 `has_authenticated_session` helper IPC 请求和响应解析稳定，且只使用非敏感 session 状态 payload。
+- [x] 单元测试：Credential Provider 侧 `get_policy_snapshot` helper IPC 请求和响应解析稳定，且不包含文件模式真实手机号。
 - [x] 单元测试：手机号校验规则，合法手机号满足 `^1[3-9]\d{9}$`，非法手机号被拒绝。
 - [x] 单元测试：手机号脱敏规则，`13812348888` 显示为 `138****8888`，非法手机号显示为安全占位文案。
 - [x] 单元测试：helper 文件读取手机号模式会让 CP 禁用手机号输入框，并且 UI 只显示脱敏手机号。
@@ -400,7 +401,7 @@
 - [x] 单元测试：`thiserror` IPC 编解码错误能稳定映射到用户可见文案。
 - [x] 单元测试：日志脱敏函数会过滤手机号、验证码、密码、token、serialization 字节和换行符。
 - [ ] 集成测试：`tracing-appender` 日志能写入 `C:\ProgramData\rdp_auth\logs` 并按配置轮转。
-- [ ] 集成测试：helper mock 服务。
+- [ ] 集成测试：helper mock 服务，包括 `get_policy_snapshot` 对 CP UI 的脱敏策略下发。（手工步骤见 `docs/helper-ipc-test.md`）
 - [ ] 集成测试：helper session notification mock，验证 lock/unlock/disconnect/logoff 事件能更新或清理内存状态。
 - [ ] 集成测试：Credential Provider 在 helper 命中已认证 session 时使用短等待/立即断开策略，在 helper 未命中时使用首次登录等待策略。
 - [ ] 集成测试：helper 不可用或 IPC 超时时，Credential Provider 回退 fail closed，不放行且不长时间阻塞 LogonUI。

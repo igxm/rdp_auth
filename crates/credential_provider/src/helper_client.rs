@@ -9,7 +9,7 @@ use std::io::{Read, Write};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use auth_ipc::{IpcRequest, IpcResponse, IpcResponsePayload, SessionStateResponse};
+use auth_ipc::{IpcRequest, IpcResponse, IpcResponsePayload, PolicySnapshot, SessionStateResponse};
 
 use crate::diagnostics::log_event;
 use crate::session::current_session_id;
@@ -63,6 +63,15 @@ pub fn has_current_session_authenticated(
 ) -> Result<SessionStateResponse, HelperClientError> {
     let session_id = current_session_id().map_err(HelperClientError::SessionId)?;
     query_session_authenticated_request(session_id, timeout)
+}
+
+/// 从 helper 获取 CP 可渲染的脱敏策略快照。
+///
+/// 策略快照只允许包含认证方式、脱敏手机号、字段可编辑状态和超时配置。CP 不读取手机号文件，
+/// 也不接收真实手机号；helper 异常时调用方继续使用本地安全默认值。
+pub fn get_current_policy_snapshot(timeout: Duration) -> Result<PolicySnapshot, HelperClientError> {
+    let session_id = current_session_id().map_err(HelperClientError::SessionId)?;
+    query_policy_snapshot_request(session_id, timeout)
 }
 
 fn send_helper_request(
@@ -120,6 +129,18 @@ fn query_session_authenticated_request(
     }
 }
 
+fn query_policy_snapshot_request(
+    session_id: u32,
+    timeout: Duration,
+) -> Result<PolicySnapshot, HelperClientError> {
+    let response = send_helper_request(IpcRequest::GetPolicySnapshot { session_id }, timeout)?;
+    match response.payload {
+        Some(IpcResponsePayload::PolicySnapshot(snapshot)) => Ok(snapshot),
+        Some(_) => Err(HelperClientError::UnexpectedPayload),
+        None => Err(HelperClientError::MissingPayload),
+    }
+}
+
 /// 记录 helper 通知结果。调用方保持主流程继续，由这里集中保证日志脱敏。
 pub fn log_mark_result(result: Result<(), HelperClientError>) {
     match result {
@@ -134,7 +155,9 @@ pub fn log_mark_result(result: Result<(), HelperClientError>) {
 #[cfg(test)]
 mod tests {
     use super::{HelperClientError, mark_session_authenticated_request};
-    use auth_ipc::{IpcRequest, IpcResponse, IpcResponsePayload, SessionStateResponse};
+    use auth_ipc::{
+        IpcRequest, IpcResponse, IpcResponsePayload, PolicySnapshot, SessionStateResponse,
+    };
 
     #[test]
     fn builds_mark_session_authenticated_request() {
@@ -169,6 +192,17 @@ mod tests {
     }
 
     #[test]
+    fn builds_get_policy_snapshot_request() {
+        let request = IpcRequest::GetPolicySnapshot { session_id: 7 };
+
+        assert!(request.to_json().unwrap().contains("get_policy_snapshot"));
+        assert_eq!(
+            IpcRequest::from_json(&request.to_json().unwrap()).unwrap(),
+            request
+        );
+    }
+
+    #[test]
     fn decodes_session_state_response_without_sensitive_payload() {
         let response = IpcResponse::success_with_payload(
             "session 状态已返回",
@@ -183,6 +217,26 @@ mod tests {
         assert!(json.contains("session_state"));
         assert!(!json.contains("password"));
         assert!(!json.contains("serialization"));
+    }
+
+    #[test]
+    fn decodes_policy_snapshot_response_without_raw_phone() {
+        let response = IpcResponse::success_with_payload(
+            "策略已加载",
+            IpcResponsePayload::PolicySnapshot(PolicySnapshot {
+                auth_methods: vec![auth_core::AuthMethod::PhoneCode],
+                phone_source: auth_ipc::PhoneInputSource::ConfiguredFile,
+                masked_phone: Some("138****8888".to_owned()),
+                phone_editable: false,
+                mfa_timeout_seconds: 90,
+                sms_resend_seconds: 45,
+            }),
+        );
+        let json = response.to_json().unwrap();
+
+        assert!(json.contains("policy_snapshot"));
+        assert!(json.contains("138****8888"));
+        assert!(!json.contains("13812348888"));
     }
 
     #[test]

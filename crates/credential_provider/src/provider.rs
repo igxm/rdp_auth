@@ -4,6 +4,7 @@
 //! Credential 实例创建。它不直接处理字段输入，也不做网络或 IPC。
 
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use windows::Win32::Foundation::{E_INVALIDARG, E_NOTIMPL, E_POINTER};
 use windows::Win32::UI::Shell::{
@@ -17,6 +18,7 @@ use windows::core::{BOOL, Error, Ref, Result, implement};
 use crate::credential::RdpMfaCredential;
 use crate::diagnostics::log_event;
 use crate::fields::{FIELD_COUNT, field_descriptor};
+use crate::helper_client::get_current_policy_snapshot;
 use crate::serialization::InboundSerialization;
 use crate::session::is_current_rdp_session;
 use crate::state::{CredentialProviderState, RDP_MFA_PROVIDER_CLSID, take_remote_source_provider};
@@ -213,6 +215,7 @@ impl ICredentialProvider_Impl for RdpMfaProvider_Impl {
             log_event("GetCredentialAt", format!("invalid index={index}"));
             return Err(Error::from_hresult(E_INVALIDARG));
         }
+        refresh_policy_snapshot_from_helper(&self.state);
         let should_guard_missing_inbound = {
             let state = self.state.lock().expect("provider state poisoned");
             !state.has_inbound_serialization && is_current_rdp_session()
@@ -226,5 +229,35 @@ impl ICredentialProvider_Impl for RdpMfaProvider_Impl {
         }
         log_event("GetCredentialAt", "returning credential index=0");
         Ok(RdpMfaCredential::new(Arc::clone(&self.state)).into())
+    }
+}
+
+fn refresh_policy_snapshot_from_helper(state: &Arc<Mutex<CredentialProviderState>>) {
+    let timeout_ms = {
+        state
+            .lock()
+            .expect("provider state poisoned")
+            .helper_ipc_timeout_ms
+    };
+
+    // 这里在不持有 Provider 状态锁时调用 helper，避免 LogonUI COM 调用栈和命名管道等待互相卡住。
+    // helper 只返回脱敏策略快照；如果 helper 不可用，CP 保留本地配置/安全默认值，不能因此放行登录。
+    match get_current_policy_snapshot(Duration::from_millis(timeout_ms)) {
+        Ok(snapshot) => {
+            let method_count = snapshot.auth_methods.len();
+            let phone_editable = snapshot.phone_editable;
+            let has_masked_phone = snapshot.masked_phone.is_some();
+            state
+                .lock()
+                .expect("provider state poisoned")
+                .apply_policy_snapshot(&snapshot);
+            log_event(
+                "GetPolicySnapshot",
+                format!(
+                    "applied method_count={method_count} phone_editable={phone_editable} has_masked_phone={has_masked_phone}"
+                ),
+            );
+        }
+        Err(error) => log_event("GetPolicySnapshot", format!("failed error={error}")),
     }
 }
