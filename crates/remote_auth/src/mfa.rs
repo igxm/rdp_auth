@@ -1,33 +1,23 @@
 //! helper 侧 MFA mock 处理。
 //!
-//! 真实 API 接入前，helper 先提供和 Credential Provider 当前 mock 行为一致的验证语义。这里仍然按
-//! helper 边界处理手机号来源：配置模式只使用 helper 从加密配置读取到的真实手机号，CP 不能把真实手机号传回来。
-use auth_core::is_valid_default_phone_number;
-use auth_ipc::{IpcResponse, PhoneInputSource};
+//! 真实 API 接入前，helper 先提供和 Credential Provider 当前 mock 行为一致的验证语义。
+//! 手机号只能来自 helper 解密后的配置，CP 和 IPC 都不再携带真实手机号。
+use auth_ipc::IpcResponse;
 
 use crate::policy::PolicyContext;
 
 const MOCK_SMS_CODE: &str = "123456";
 const MOCK_SECOND_PASSWORD: &str = "mock-password";
 
-pub fn handle_send_sms(
-    source: PhoneInputSource,
-    phone: Option<&str>,
-    policy: &PolicyContext,
-) -> IpcResponse {
-    match resolve_phone(source, phone, policy) {
+pub fn handle_send_sms(policy: &PolicyContext) -> IpcResponse {
+    match resolve_configured_phone(policy) {
         Ok(_) => IpcResponse::success("验证码已发送"),
         Err(message) => IpcResponse::failure(message),
     }
 }
 
-pub fn handle_verify_sms(phone: Option<&str>, code: &str, policy: &PolicyContext) -> IpcResponse {
-    let resolved_phone = if policy.snapshot.phone_editable {
-        resolve_phone(PhoneInputSource::ManualInput, phone, policy)
-    } else {
-        resolve_phone(PhoneInputSource::Configured, None, policy)
-    };
-    if let Err(message) = resolved_phone {
+pub fn handle_verify_sms(code: &str, policy: &PolicyContext) -> IpcResponse {
+    if let Err(message) = resolve_configured_phone(policy) {
         return IpcResponse::failure(message);
     }
     if code.trim() == MOCK_SMS_CODE {
@@ -45,28 +35,12 @@ pub fn handle_verify_second_password(password: &str) -> IpcResponse {
     }
 }
 
-fn resolve_phone(
-    source: PhoneInputSource,
-    phone: Option<&str>,
-    policy: &PolicyContext,
-) -> Result<String, &'static str> {
-    match source {
-        PhoneInputSource::ManualInput => {
-            let value = phone.map(str::trim).filter(|value| !value.is_empty());
-            let Some(value) = value else {
-                return Err("请输入正确的手机号");
-            };
-            if is_valid_default_phone_number(value) {
-                Ok(value.to_owned())
-            } else {
-                Err("请输入正确的手机号")
-            }
-        }
-        PhoneInputSource::Configured => policy
-            .configured_phone
-            .clone()
-            .ok_or("手机号配置无效，请联系管理员"),
-    }
+fn resolve_configured_phone(policy: &PolicyContext) -> Result<String, &'static str> {
+    // 这里故意不接收 CP 传入的手机号：手机号属于管理员配置数据，真实值只应短暂停留在 helper 内存中。
+    policy
+        .configured_phone
+        .clone()
+        .ok_or("手机号配置无效，请联系管理员")
 }
 
 #[cfg(test)]
@@ -74,25 +48,14 @@ mod tests {
     use super::{handle_send_sms, handle_verify_second_password, handle_verify_sms};
     use crate::policy::policy_context_from_config;
     use auth_config::{AppConfig, PhoneConfig, PhoneSource};
-    use auth_ipc::PhoneInputSource;
-
     #[test]
-    fn send_sms_accepts_valid_manual_phone() {
+    fn send_sms_requires_configured_phone() {
         let policy = policy_context_from_config(&AppConfig::default());
 
-        let response = handle_send_sms(PhoneInputSource::ManualInput, Some("13812348888"), &policy);
-
-        assert!(response.ok);
-    }
-
-    #[test]
-    fn send_sms_rejects_invalid_manual_phone() {
-        let policy = policy_context_from_config(&AppConfig::default());
-
-        let response = handle_send_sms(PhoneInputSource::ManualInput, Some("bad"), &policy);
+        let response = handle_send_sms(&policy);
 
         assert!(!response.ok);
-        assert!(!response.message.contains("bad"));
+        assert_eq!(response.message, "手机号配置无效，请联系管理员");
     }
 
     #[test]
@@ -107,17 +70,25 @@ mod tests {
         };
         let policy = policy_context_from_config(&config);
 
-        let response = handle_send_sms(PhoneInputSource::Configured, None, &policy);
+        let response = handle_send_sms(&policy);
 
         assert!(response.ok);
     }
 
     #[test]
     fn verify_sms_uses_mock_code() {
-        let policy = policy_context_from_config(&AppConfig::default());
+        let config = AppConfig {
+            phone: PhoneConfig {
+                source: PhoneSource::Config,
+                number: "13812348888".to_owned(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let policy = policy_context_from_config(&config);
 
-        assert!(handle_verify_sms(Some("13812348888"), "123456", &policy).ok);
-        assert!(!handle_verify_sms(Some("13812348888"), "000000", &policy).ok);
+        assert!(handle_verify_sms("123456", &policy).ok);
+        assert!(!handle_verify_sms("000000", &policy).ok);
     }
 
     #[test]

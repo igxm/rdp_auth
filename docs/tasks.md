@@ -159,10 +159,10 @@
 - [x] 认证方式切换后，通过 `ICredentialProviderCredentialEvents` 主动通知 LogonUI 刷新字段，避免手机号/验证码/二次密码 UI 不同步。
 - [x] 实现输入框取值和状态文本刷新。
 - [x] 实现按钮点击回调。
-- [x] 手机号认证支持两种来源：helper 从加密配置读取手机号、用户手动输入手机号；来源策略由 helper 统一下发，Credential Provider 只负责展示和轻量校验。
-- [ ] helper 读取手机号模式：手机号字段显示 helper 返回的脱敏格式，例如 `138****8888`，并设置为不可编辑；Credential Provider 不接触真实手机号。
-- [ ] 手动输入手机号模式：手机号字段允许编辑，点击发送验证码前必须通过手机号正则校验，默认规则为 `^1[3-9]\d{9}$`。
-- [ ] 手机号不合法时不允许进入发送短信流程，刷新状态提示为“请输入正确的手机号”或“手机号配置无效，请联系管理员”。
+- [x] 手机号认证只支持 helper 从加密配置读取手机号；Credential Provider 只展示脱敏手机号，不提供手机号输入。
+- [x] helper 读取手机号模式：手机号字段显示 helper 返回的脱敏格式，例如 `138****8888`，并设置为不可编辑；Credential Provider 不接触真实手机号。
+- [x] 取消手动输入手机号模式；旧版 `phone.source = "input"` 仅作为导入兼容值，运行期归一化为配置手机号。
+- [x] 手机号配置无效时不允许进入发送短信流程，刷新状态提示为“手机号配置无效，请联系管理员”。
 - [x] 删除底部重复状态区域，避免登录按钮下方再出现一块“第二部分”内容。
 - [x] 发送验证码后立即把按钮切换为禁用态，并显示 `重新发送(60)`。
 - [x] 实现短信验证码重新发送倒计时递减，并在 60 秒后恢复为可点击 `发送验证码`。（当前通过 LogonUI events 只刷新发送短信按钮；后续接入 helper 后可改为 helper 心跳驱动）
@@ -199,7 +199,7 @@
 - [x] IPC 响应只返回布尔值、状态码、TTL/时间戳等非敏感信息，不返回用户标识、手机号、密码或原始凭证材料。
 - [x] 支持 `get_policy_snapshot` 请求：helper 读取本地加密配置后，返回 CP 可渲染的脱敏策略快照，包括认证方式列表、手机号来源、脱敏手机号、手机号字段是否可编辑和超时配置；远程配置和用户可见提示待后续扩展协议字段。
 - [x] 支持 `send_sms` 请求。
-- [x] `send_sms` 请求携带手机号来源标记；配置手机号模式下 CP 不传真实手机号，helper 使用解密配置中已校验过的真实手机号；手动输入模式下 CP 只传用户输入手机号。
+- [x] `send_sms` 请求不携带手机号；helper 使用解密配置中已校验过的真实手机号，避免真实手机号进入 IPC。
 - [x] helper 对手机号再次执行格式校验，禁止只依赖 Credential Provider UI 校验；手机号非法时返回可展示错误且不调用真实短信 API。
 - [x] helper 实现配置手机号读取和校验：读取解密配置中的 `phone.number`，校验 `^1[3-9]\d{9}$`，只向 CP 返回脱敏手机号和不可编辑标记，日志不得记录完整手机号。
 - [x] helper 为每次 MFA 请求生成审计上下文 `AuditContext`：包含 request_id、session_id、client_ip、host_public_ip、host_private_ips、host_uuid 和认证方式。
@@ -240,8 +240,8 @@
 - [x] 定义 RDP 断开策略配置，例如 `mfa.disconnect_when_missing_serialization = true`，应急关闭时必须记录脱敏诊断日志并保持 fail closed，不得绕过 MFA。
 - [x] 定义 helper session 状态配置，例如 `mfa.session_state_ttl_seconds`、`mfa.authenticated_session_short_grace_seconds`、`mfa.initial_login_grace_seconds`，用于区分已认证会话返回 LogonUI 和首次登录等待 serialization。
 - [x] 定义 helper IPC 超时配置，例如 `mfa.helper_ipc_timeout_ms`，默认应足够短，避免 LogonUI 被 helper 卡住。
-- [x] 定义手机号来源配置，例如 `phone.source = "config" | "input"`；默认建议为 `input`，避免配置缺失导致测试环境无法收验证码。
-- [x] 定义配置手机号字段 `phone.number`，仅在 `phone.source = "config"` 时由 helper 从解密配置读取，Credential Provider 不接收完整手机号。
+- [x] 定义手机号来源配置，例如 `phone.source = "config"`；旧版 `input` 仅保留解析兼容，运行期会归一化为 `config`。
+- [x] 定义配置手机号字段 `phone.number`，由 helper 从解密配置读取，Credential Provider 不接收完整手机号。
 - [x] `auth_core` 提供手机号校验和脱敏函数：合法手机号按 `138****8888` 格式展示，非法手机号不暴露前后缀。
 - [x] `auth_config` 只定义手机号来源、配置手机号、优先级和错误类型；真实手机号校验和 fail closed 决策由 helper 执行。
 - [x] 定义公网 IP 查询配置，例如 `api.public_ip_endpoint`、`api.public_ip_timeout_seconds`、`api.require_public_ip_for_sms`，默认公网 IP 获取失败不阻断短信。
@@ -385,7 +385,7 @@
 - [x] 单元测试：手机号脱敏规则，`13812348888` 显示为 `138****8888`，非法手机号显示为安全占位文案。
 - [x] 单元测试：helper 配置手机号模式会让 CP 禁用手机号输入框，并且 UI 只显示脱敏手机号。
 - [x] 单元测试：helper 策略快照在配置手机号模式下只返回脱敏手机号，且手机号字段不可编辑。
-- [x] 单元测试：手动输入手机号模式下，手机号不合法时禁止发送验证码并显示错误提示。
+- [x] 单元测试：取消手动输入手机号模式后，旧版可编辑策略会被 CP 强制收敛为只读展示，短信 IPC 不携带手机号。
 - [x] 单元测试：`get_policy_snapshot` 不包含配置模式真实手机号，只包含脱敏手机号、字段可编辑状态和策略来源。
 - [x] 单元测试：本机内网 IP 枚举会过滤 loopback、link-local、公网地址和明显无效地址，并保留多网卡有效内网地址。
 - [ ] 单元测试：公网 IP 获取失败时按策略返回 `unknown` 或 fail closed。

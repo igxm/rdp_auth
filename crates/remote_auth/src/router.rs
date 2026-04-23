@@ -45,12 +45,8 @@ pub fn handle_request(
             sessions.clear_session(session_id);
             IpcResponse::success("session 已清理")
         }
-        IpcRequest::SendSms { phone, source, .. } => {
-            crate::mfa::handle_send_sms(source, phone.as_deref(), &policy)
-        }
-        IpcRequest::VerifySms { phone, code, .. } => {
-            crate::mfa::handle_verify_sms(phone.as_deref(), &code, &policy)
-        }
+        IpcRequest::SendSms { .. } => crate::mfa::handle_send_sms(&policy),
+        IpcRequest::VerifySms { code, .. } => crate::mfa::handle_verify_sms(&code, &policy),
         IpcRequest::VerifySecondPassword { password, .. } => {
             crate::mfa::handle_verify_second_password(&password)
         }
@@ -92,7 +88,7 @@ fn request_session_id(request: &IpcRequest) -> u32 {
         | IpcRequest::MarkSessionAuthenticated { session_id }
         | IpcRequest::HasAuthenticatedSession { session_id }
         | IpcRequest::ClearSessionState { session_id }
-        | IpcRequest::SendSms { session_id, .. }
+        | IpcRequest::SendSms { session_id }
         | IpcRequest::VerifySms { session_id, .. }
         | IpcRequest::VerifySecondPassword { session_id, .. }
         | IpcRequest::PostLoginLog { session_id, .. } => *session_id,
@@ -104,7 +100,7 @@ mod tests {
     use super::handle_request;
     use crate::policy::policy_context_from_config;
     use crate::session_state::SessionAuthState;
-    use auth_config::AppConfig;
+    use auth_config::{AppConfig, PhoneConfig, PhoneSource};
     use auth_ipc::{IpcRequest, IpcResponsePayload};
     use std::time::{Duration, Instant};
 
@@ -217,14 +213,17 @@ mod tests {
     fn routes_mock_mfa_requests() {
         let now = Instant::now();
         let mut sessions = SessionAuthState::new(Duration::from_secs(60));
-        let policy = policy_context_from_config(&AppConfig::default());
+        let policy = policy_context_from_config(&AppConfig {
+            phone: PhoneConfig {
+                source: PhoneSource::Config,
+                number: "13812348888".to_owned(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
 
         let send = handle_request(
-            IpcRequest::SendSms {
-                session_id: 7,
-                phone: Some("13812348888".to_owned()),
-                source: auth_ipc::PhoneInputSource::ManualInput,
-            },
+            IpcRequest::SendSms { session_id: 7 },
             &mut sessions,
             now,
             policy.clone(),
@@ -234,7 +233,6 @@ mod tests {
         let verify_sms = handle_request(
             IpcRequest::VerifySms {
                 session_id: 7,
-                phone: Some("13812348888".to_owned()),
                 code: "123456".to_owned(),
             },
             &mut sessions,

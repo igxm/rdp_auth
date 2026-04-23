@@ -137,7 +137,7 @@ impl fmt::Display for AuthMethodsConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PhoneSource {
-    /// 用户在 CP UI 中手动输入手机号。
+    /// 旧配置兼容值；运行期会归一化为 `Config`，CP 不再提供手机号输入。
     Input,
     /// helper 从加密业务配置读取真实手机号，CP 只接收脱敏展示值。
     #[serde(alias = "file")]
@@ -146,7 +146,7 @@ pub enum PhoneSource {
 
 impl Default for PhoneSource {
     fn default() -> Self {
-        Self::Input
+        Self::Config
     }
 }
 
@@ -173,6 +173,9 @@ impl Default for PhoneConfig {
 
 impl PhoneConfig {
     fn normalized(mut self) -> Self {
+        // 手机号不再由 Credential Provider 输入。即使管理员导入旧版 `source = "input"`，
+        // 运行期也强制收敛到配置来源，避免真实手机号经 LogonUI 字段或 IPC 流动。
+        self.source = PhoneSource::Config;
         self.number = self.number.trim().to_owned();
         if self.validation_pattern.trim().is_empty() {
             self.validation_pattern = default_phone_validation_pattern();
@@ -631,7 +634,7 @@ timeout_seconds = 180
             config.auth_methods.enabled_methods(),
             vec![AuthMethod::PhoneCode, AuthMethod::SecondPassword]
         );
-        assert_eq!(config.phone.source, PhoneSource::Input);
+        assert_eq!(config.phone.source, PhoneSource::Config);
         assert_eq!(config.api.connect_timeout_seconds, 5);
         assert_eq!(config.audit.ip_logging, IpLoggingMode::Masked);
         assert!(!config.remote_config.enabled);
@@ -748,6 +751,24 @@ schema_version = 1
 source = "file"
 file_path = "C:\\ProgramData\\rdp_auth\\phone.txt"
 number = "13812348888"
+"#,
+        )
+        .unwrap()
+        .normalized();
+
+        assert_eq!(config.phone.source, PhoneSource::Config);
+        assert_eq!(config.phone.number, "13812348888");
+    }
+
+    #[test]
+    fn legacy_input_source_normalizes_to_config() {
+        let config = toml::from_str::<AppConfig>(
+            r#"
+schema_version = 1
+
+[phone]
+source = "input"
+number = " 13812348888 "
 "#,
         )
         .unwrap()

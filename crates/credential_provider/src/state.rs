@@ -156,9 +156,9 @@ pub struct CredentialProviderState {
     pub selected_method: AuthMethod,
     /// 当前配置允许展示和提交的认证方式。全部关闭时由 auth_config 回退到安全默认集合。
     pub available_auth_methods: Vec<AuthMethod>,
-    /// 手机号输入值。Credential Provider 进程内只短暂保存 UI 内容，不写日志。
+    /// 手机号展示值。Credential Provider 只保存 helper 下发的脱敏值，不再接收手动输入。
     pub phone: String,
-    /// 手机号字段是否允许用户编辑。配置模式下 helper 只下发脱敏号码，CP 必须禁用编辑。
+    /// 手机号字段是否允许用户编辑。保留字段用于兼容旧快照，但运行期始终收敛为不可编辑。
     pub phone_editable: bool,
     /// 短信验证码输入值。验证码属于敏感内容，只能保存在内存状态中。
     pub sms_code: String,
@@ -209,7 +209,7 @@ impl Default for CredentialProviderState {
             selected_method,
             available_auth_methods,
             phone: String::new(),
-            phone_editable: true,
+            phone_editable: false,
             sms_code: String::new(),
             second_password: String::new(),
             status_message: "请选择二次认证方式".to_owned(),
@@ -230,7 +230,7 @@ impl CredentialProviderState {
     /// 应用 helper 下发的脱敏策略快照。
     ///
     /// 这里不读取业务配置，也不接触真实手机号；配置模式只把 helper 返回的脱敏值显示在 UI 中，
-    /// 并禁用手机号输入框，避免 CP 进程保存或修改真实手机号。
+    /// 并禁用手机号输入，避免 CP 进程保存或修改真实手机号。
     pub fn apply_policy_snapshot(&mut self, snapshot: &PolicySnapshot) {
         if !snapshot.auth_methods.is_empty() {
             self.available_auth_methods = snapshot.auth_methods.clone();
@@ -242,10 +242,13 @@ impl CredentialProviderState {
                 .copied()
                 .unwrap_or(AuthMethod::PhoneCode);
         }
-        self.phone_editable = snapshot.phone_editable;
-        if !snapshot.phone_editable {
-            self.phone = snapshot.masked_phone.clone().unwrap_or_default();
-        }
+        // 旧 helper 可能仍返回 `phone_editable=true`；CP 作为 LogonUI 边界必须本地兜底，
+        // 不允许真实手机号重新进入 UI 输入字段或后续 IPC。
+        self.phone_editable = false;
+        self.phone = snapshot
+            .masked_phone
+            .clone()
+            .unwrap_or_else(|| "手机号未配置，请联系管理员".to_owned());
         self.mfa_timeout_seconds = snapshot.mfa_timeout_seconds;
         self.sms_resend_seconds = snapshot.sms_resend_seconds;
     }
@@ -293,7 +296,7 @@ mod tests {
         assert_eq!(state.timeout_generation, 0);
         assert_eq!(state.sms_resend_generation, 0);
         assert!(!state.sms_sent_timeout_extended);
-        assert!(state.phone_editable);
+        assert!(!state.phone_editable);
         assert_eq!(
             state.available_auth_methods,
             vec![AuthMethod::PhoneCode, AuthMethod::SecondPassword]
@@ -322,7 +325,7 @@ mod tests {
     }
 
     #[test]
-    fn manual_phone_policy_snapshot_keeps_existing_input_editable() {
+    fn legacy_editable_phone_policy_is_forced_to_display_only() {
         let mut state = CredentialProviderState::default();
         state.phone = "13800138000".to_owned();
 
@@ -335,8 +338,8 @@ mod tests {
             sms_resend_seconds: 60,
         });
 
-        assert_eq!(state.phone, "13800138000");
-        assert!(state.phone_editable);
+        assert_eq!(state.phone, "手机号未配置，请联系管理员");
+        assert!(!state.phone_editable);
         assert_eq!(state.selected_method, AuthMethod::SecondPassword);
     }
 

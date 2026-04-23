@@ -23,18 +23,10 @@ pub enum IpcRequest {
     HasAuthenticatedSession { session_id: u32 },
     /// 清理指定 session 的内存状态，用于断开、注销或异常恢复。
     ClearSessionState { session_id: u32 },
-    /// 请求服务端发送短信验证码。
-    SendSms {
-        session_id: u32,
-        phone: Option<String>,
-        source: PhoneInputSource,
-    },
-    /// 校验短信验证码。
-    VerifySms {
-        session_id: u32,
-        phone: Option<String>,
-        code: String,
-    },
+    /// 请求服务端发送短信验证码。手机号只能由 helper 从加密配置读取，IPC 不携带真实号码。
+    SendSms { session_id: u32 },
+    /// 校验短信验证码。验证码仍属于敏感输入，后续应只走短超时 IPC 且不得写日志。
+    VerifySms { session_id: u32, code: String },
     /// 校验二次密码。
     VerifySecondPassword { session_id: u32, password: String },
     /// 上报登录日志，后续会扩展来源 IP、RDP 用户、认证方式等字段。
@@ -49,7 +41,7 @@ pub enum IpcRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PhoneInputSource {
-    /// 用户在 CP UI 中手动输入，CP 可以传入手机号。
+    /// 旧协议兼容值；helper 策略不再下发可编辑手机号，CP 不应发送真实手机号。
     ManualInput,
     /// helper 自己从加密配置读取真实手机号，CP 不传真实手机号。
     #[serde(alias = "configured_file")]
@@ -212,5 +204,23 @@ mod tests {
     fn rejects_unknown_request_json() {
         let error = IpcRequest::from_json(r#"{"type":"unknown"}"#).unwrap_err();
         assert!(error.to_string().contains("IPC JSON"));
+    }
+
+    #[test]
+    fn sms_requests_do_not_carry_phone_number() {
+        let send = IpcRequest::SendSms { session_id: 7 }.to_json().unwrap();
+        let verify = IpcRequest::VerifySms {
+            session_id: 7,
+            code: "123456".to_owned(),
+        }
+        .to_json()
+        .unwrap();
+
+        assert!(!send.contains("phone"));
+        assert!(!verify.contains("phone"));
+        assert_eq!(
+            IpcRequest::from_json(&send).unwrap(),
+            IpcRequest::SendSms { session_id: 7 }
+        );
     }
 }

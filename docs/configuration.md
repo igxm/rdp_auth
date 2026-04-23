@@ -71,8 +71,8 @@ initial_login_grace_seconds = 5
 fail_closed = true
 
 [phone]
-source = "input"
-number = ""
+source = "config"
+number = "13812348888"
 validation_pattern = "^1[3-9]\\d{9}$"
 
 [api]
@@ -112,6 +112,6 @@ diagnostic_level = "info"
 - 配置文件解密或解析失败时记录脱敏诊断日志，并回退安全默认值。
 - `mfa.timeout_seconds` 过小、过大或非法时回退 120 秒；首次点击发送短信验证码后，当前二次认证页面等待窗口会重置为 300 秒，后续重发不再刷新该超时。
 - 认证方式全部关闭时自动恢复手机验证码和二次密码，不能导致绕过 MFA。
-- 配置模式手机号只能由 helper 从加密配置读取和校验，策略快照只包含脱敏手机号；明文导出 TOML 会短暂包含完整手机号，必须按敏感文件处理。
+- 手机号只能由 helper 从加密配置读取和校验，Credential Provider 不再提供手机号输入框，策略快照只包含脱敏手机号；旧配置中的 `phone.source = "input"` 会被归一化为 `config`。明文导出 TOML 会短暂包含完整手机号，必须按敏感文件处理。
 - 远程配置必须带版本、更新时间、TTL 和签名或 HMAC；校验失败不得生效。
 - 单元测试和 VM 测试必须覆盖 AES 加密文件读取、错误密文、错误机器码、旧版明文迁移和导入/导出；Windows Server 2008 R2 兼容性暂不纳入当前测试目标。

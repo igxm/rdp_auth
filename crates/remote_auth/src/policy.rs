@@ -3,7 +3,7 @@
 //! Credential Provider 只应该拿到可渲染的脱敏快照。真实手机号随加密配置进入 helper，
 //! CP 不直接读取配置文件，也不接收完整手机号。
 
-use auth_config::{AppConfig, PhoneSource};
+use auth_config::AppConfig;
 use auth_core::{is_valid_default_phone_number, mask_phone_number};
 use auth_ipc::{PhoneInputSource, PolicySnapshot};
 
@@ -19,24 +19,17 @@ pub fn load_policy_context_from_disk() -> PolicyContext {
 }
 
 pub fn policy_context_from_config(config: &AppConfig) -> PolicyContext {
-    let phone_source = match config.phone.source {
-        PhoneSource::Input => PhoneInputSource::ManualInput,
-        PhoneSource::Config => PhoneInputSource::Configured,
-    };
-    let valid_configured_phone = match config.phone.source {
-        PhoneSource::Input => None,
-        PhoneSource::Config => Some(config.phone.number.as_str())
-            .filter(|phone| is_valid_default_phone_number(phone))
-            .map(ToOwned::to_owned),
-    };
+    let valid_configured_phone = Some(config.phone.number.as_str())
+        .filter(|phone| is_valid_default_phone_number(phone))
+        .map(ToOwned::to_owned);
     let masked_phone = valid_configured_phone.as_deref().map(mask_phone_number);
 
     PolicyContext {
         snapshot: PolicySnapshot {
             auth_methods: config.auth_methods.enabled_methods(),
-            phone_source,
+            phone_source: PhoneInputSource::Configured,
             masked_phone,
-            phone_editable: matches!(config.phone.source, PhoneSource::Input),
+            phone_editable: false,
             mfa_timeout_seconds: config.mfa.timeout_seconds,
             sms_resend_seconds: config.mfa.sms_resend_seconds,
         },
@@ -57,7 +50,7 @@ mod tests {
     use auth_ipc::PhoneInputSource;
 
     #[test]
-    fn input_phone_policy_keeps_phone_editable_without_masked_value() {
+    fn default_phone_policy_requires_configured_phone_without_input() {
         let config = AppConfig::default();
 
         let snapshot = policy_snapshot_from_config(&config);
@@ -66,8 +59,8 @@ mod tests {
             snapshot.auth_methods,
             vec![AuthMethod::PhoneCode, AuthMethod::SecondPassword]
         );
-        assert_eq!(snapshot.phone_source, PhoneInputSource::ManualInput);
-        assert!(snapshot.phone_editable);
+        assert_eq!(snapshot.phone_source, PhoneInputSource::Configured);
+        assert!(!snapshot.phone_editable);
         assert_eq!(snapshot.masked_phone, None);
         assert_eq!(snapshot.mfa_timeout_seconds, 120);
         assert_eq!(snapshot.sms_resend_seconds, 60);

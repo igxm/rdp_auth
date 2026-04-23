@@ -11,13 +11,12 @@ use auth_core::{AuthMethod, MfaState};
 use windows::Win32::Foundation::{E_INVALIDARG, E_NOTIMPL, E_POINTER, NTSTATUS};
 use windows::Win32::Graphics::Gdi::HBITMAP;
 use windows::Win32::UI::Shell::{
-    CPFIS_DISABLED, CPFIS_FOCUSED, CPFIS_NONE, CPFIS_READONLY, CPFS_DISPLAY_IN_BOTH,
-    CPFS_DISPLAY_IN_SELECTED_TILE, CPFS_HIDDEN, CPGSR_NO_CREDENTIAL_NOT_FINISHED,
-    CPGSR_RETURN_CREDENTIAL_FINISHED, CPSI_ERROR, CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION,
-    CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE, CREDENTIAL_PROVIDER_FIELD_STATE,
-    CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE, CREDENTIAL_PROVIDER_STATUS_ICON,
-    ICredentialProviderCredential, ICredentialProviderCredential_Impl,
-    ICredentialProviderCredentialEvents,
+    CPFIS_DISABLED, CPFIS_FOCUSED, CPFIS_NONE, CPFS_DISPLAY_IN_BOTH, CPFS_DISPLAY_IN_SELECTED_TILE,
+    CPFS_HIDDEN, CPGSR_NO_CREDENTIAL_NOT_FINISHED, CPGSR_RETURN_CREDENTIAL_FINISHED, CPSI_ERROR,
+    CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION, CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE,
+    CREDENTIAL_PROVIDER_FIELD_STATE, CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE,
+    CREDENTIAL_PROVIDER_STATUS_ICON, ICredentialProviderCredential,
+    ICredentialProviderCredential_Impl, ICredentialProviderCredentialEvents,
 };
 use windows::core::{BOOL, Error, IUnknownImpl, PCWSTR, PWSTR, Ref, Result, implement};
 
@@ -337,11 +336,8 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
                 let update = apply_phone_field_input(&mut state, value);
                 drop(state);
                 match update {
-                    PhoneFieldUpdate::Accepted { chars } => {
-                        log_event("SetStringValue", format!("field=Phone chars={chars}"));
-                    }
                     PhoneFieldUpdate::RestoreDisplay { phone } => {
-                        log_event("SetStringValue", "field=Phone restore_readonly_value");
+                        log_event("SetStringValue", "field=Phone ignored_display_only");
                         self.reset_phone_field_string(&phone)?;
                     }
                 }
@@ -396,7 +392,7 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
             ),
         );
         state.status_message = match method {
-            AuthMethod::PhoneCode => "请输入手机号并发送验证码".to_owned(),
+            AuthMethod::PhoneCode => "请发送验证码并输入短信验证码".to_owned(),
             AuthMethod::SecondPassword => "请输入二次密码".to_owned(),
             AuthMethod::Wechat => "微信扫码认证暂未接入，请选择其他方式".to_owned(),
         };
@@ -635,11 +631,10 @@ fn field_visibility(
         MfaField::Phone | MfaField::SmsCode | MfaField::SendSms
             if state.selected_method == AuthMethod::PhoneCode =>
         {
-            let interactive_state = if field == MfaField::Phone && !state.phone_editable {
-                // 配置手机号只展示 helper 返回的脱敏值。使用 READONLY 而不是 DISABLED，
-                // 避免 LogonUI 在深色/图片背景上把禁用输入框渲染成低对比灰字，同时仍由
-                // SetStringValue 拒绝写入，确保 CP 不接收真实手机号。
-                CPFIS_READONLY
+            let interactive_state = if field == MfaField::Phone {
+                // 手机号字段已经从输入框收敛为只读文本。这里仍返回 NONE，让 LogonUI
+                // 按静态文本渲染，避免 READONLY EDIT_TEXT 在部分系统主题下看起来仍可输入。
+                CPFIS_NONE
             } else if field == MfaField::SendSms && state.sms_resend_remaining > 0 {
                 CPFIS_DISABLED
             } else {
@@ -686,19 +681,19 @@ fn auth_method_label(method: AuthMethod) -> &'static str {
 
 #[derive(Debug, PartialEq, Eq)]
 enum PhoneFieldUpdate {
-    Accepted { chars: usize },
     RestoreDisplay { phone: String },
 }
 
-fn apply_phone_field_input(state: &mut CredentialProviderState, value: String) -> PhoneFieldUpdate {
-    if !state.phone_editable {
-        return PhoneFieldUpdate::RestoreDisplay {
-            phone: state.phone.clone(),
-        };
+fn apply_phone_field_input(
+    state: &mut CredentialProviderState,
+    _value: String,
+) -> PhoneFieldUpdate {
+    // 防御旧版 LogonUI 缓存字段描述符或旧 helper 快照导致的写入回调：手机号不再是输入项，
+    // CP 不能保存用户输入，也不能把它带入 IPC。
+    state.phone_editable = false;
+    PhoneFieldUpdate::RestoreDisplay {
+        phone: state.phone.clone(),
     }
-    let chars = value.chars().count();
-    state.phone = value;
-    PhoneFieldUpdate::Accepted { chars }
 }
 
 fn status_text(state: &CredentialProviderState) -> &str {
@@ -721,7 +716,7 @@ fn verify_mock_mfa(state: &mut CredentialProviderState) -> std::result::Result<(
     let result = match state.selected_method {
         AuthMethod::PhoneCode => {
             if state.phone.trim().is_empty() {
-                Err("请输入手机号")
+                Err("手机号未配置，请联系管理员")
             } else if state.sms_code.trim() == MOCK_SMS_CODE {
                 Ok(())
             } else {
@@ -811,7 +806,7 @@ mod tests {
     use auth_core::{AuthMethod, MfaState};
     use auth_ipc::{PhoneInputSource, PolicySnapshot};
     use windows::Win32::UI::Shell::{
-        CPFIS_DISABLED, CPFIS_READONLY, CPFS_DISPLAY_IN_SELECTED_TILE, CPFS_HIDDEN,
+        CPFIS_DISABLED, CPFIS_NONE, CPFS_DISPLAY_IN_SELECTED_TILE, CPFS_HIDDEN,
     };
 
     #[test]
@@ -855,7 +850,7 @@ mod tests {
         });
 
         assert_eq!(state.phone, "138****8888");
-        assert_eq!(field_visibility(MfaField::Phone, &state).1, CPFIS_READONLY);
+        assert_eq!(field_visibility(MfaField::Phone, &state).1, CPFIS_NONE);
         assert_eq!(
             field_visibility(MfaField::SmsCode, &state).0,
             CPFS_DISPLAY_IN_SELECTED_TILE
@@ -880,14 +875,21 @@ mod tests {
     }
 
     #[test]
-    fn manual_phone_input_updates_state() {
+    fn phone_input_is_ignored_even_for_legacy_editable_state() {
         let mut state = CredentialProviderState::default();
         state.phone_editable = true;
+        state.phone = "138****8888".to_owned();
 
         let update = apply_phone_field_input(&mut state, "13800138000".to_owned());
 
-        assert_eq!(state.phone, "13800138000");
-        assert_eq!(update, PhoneFieldUpdate::Accepted { chars: 11 });
+        assert_eq!(state.phone, "138****8888");
+        assert!(!state.phone_editable);
+        assert_eq!(
+            update,
+            PhoneFieldUpdate::RestoreDisplay {
+                phone: "138****8888".to_owned()
+            }
+        );
     }
 
     #[test]
