@@ -5,7 +5,7 @@
 //! session，以及缺失 inbound serialization 时查询 helper 是否记得该 session 已认证。
 
 use std::fs::OpenOptions;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -25,6 +25,7 @@ pub enum HelperClientError {
     Write(std::io::Error),
     Read(std::io::Error),
     Deserialize(auth_ipc::Error),
+    EmptyResponse,
     ResponseFailed,
     MissingPayload,
     UnexpectedPayload,
@@ -41,6 +42,7 @@ impl std::fmt::Display for HelperClientError {
             Self::Deserialize(error) => {
                 write!(formatter, "deserialize_response_failed error={error}")
             }
+            Self::EmptyResponse => write!(formatter, "helper_response_empty"),
             Self::ResponseFailed => write!(formatter, "helper_response_failed"),
             Self::MissingPayload => write!(formatter, "helper_response_missing_payload"),
             Self::UnexpectedPayload => write!(formatter, "helper_response_unexpected_payload"),
@@ -92,11 +94,7 @@ fn send_helper_request(
                     .and_then(|_| pipe.write_all(b"\n"))
                     .and_then(|_| pipe.flush())
                     .map_err(HelperClientError::Write)?;
-                let mut response_json = String::new();
-                pipe.read_to_string(&mut response_json)
-                    .map_err(HelperClientError::Read)?;
-                let response = IpcResponse::from_json(response_json.trim())
-                    .map_err(HelperClientError::Deserialize)?;
+                let response = read_response_line(pipe)?;
                 if response.ok {
                     return Ok(response);
                 }
@@ -110,6 +108,21 @@ fn send_helper_request(
             }
         }
     }
+}
+
+fn read_response_line(pipe: std::fs::File) -> Result<IpcResponse, HelperClientError> {
+    let mut reader = BufReader::new(pipe);
+    let mut response_json = String::new();
+    // helper 协议是一条 JSON 响应加换行。CP 不能等待管道 EOF，否则会和
+    // helper 的 Flush/Disconnect 时序互相牵制，导致 LogonUI 中短超时 IPC
+    // 偶发 fail closed；这里只读取一行并立即返回。
+    let bytes_read = reader
+        .read_line(&mut response_json)
+        .map_err(HelperClientError::Read)?;
+    if bytes_read == 0 || response_json.trim().is_empty() {
+        return Err(HelperClientError::EmptyResponse);
+    }
+    IpcResponse::from_json(response_json.trim()).map_err(HelperClientError::Deserialize)
 }
 
 fn mark_session_authenticated_request(session_id: u32) -> IpcRequest {
@@ -248,6 +261,10 @@ mod tests {
         assert_eq!(
             HelperClientError::MissingPayload.to_string(),
             "helper_response_missing_payload"
+        );
+        assert_eq!(
+            HelperClientError::EmptyResponse.to_string(),
+            "helper_response_empty"
         );
     }
 }
