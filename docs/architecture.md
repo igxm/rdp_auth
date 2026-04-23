@@ -92,7 +92,7 @@ Filter 会临时把 Provider CLSID 改成本项目 CLSID，让 LogonUI 把远程
 
 ## 认证超时策略
 
-二次认证界面已经接入默认 2 分钟超时断开机制：Credential Provider 收到 RDP inbound serialization 后启动一次性受控定时器，如果到期时二次认证仍未通过，会调用 Remote Desktop Services API 断开当前 RDP 会话，避免远程登录界面长时间停留。点击发送短信验证码后，当前二次认证页面等待窗口会重置为 5 分钟。每次新的 RDP serialization 或短信发送都会递增 timeout generation，旧定时器醒来后会自动退出，避免误断开新的登录尝试。默认超时时间通过统一配置文件读取，例如 `mfa.timeout_seconds`，缺失或非法时恢复默认 120 秒。
+二次认证界面已经接入默认 2 分钟超时断开机制：Credential Provider 收到 RDP inbound serialization 后启动一次性受控定时器，如果到期时二次认证仍未通过，会调用 Remote Desktop Services API 断开当前 RDP 会话，避免远程登录界面长时间停留。首次点击发送短信验证码后，当前二次认证页面等待窗口会重置为 5 分钟；后续重发短信只刷新重发倒计时，不再延长 MFA 超时。每次新的 RDP serialization 或首次短信发送都会递增 timeout generation，旧定时器醒来后会自动退出，避免误断开新的登录尝试。默认超时时间通过统一配置文件读取，例如 `mfa.timeout_seconds`，缺失或非法时恢复默认 120 秒。
 
 ## 认证方式配置策略
 

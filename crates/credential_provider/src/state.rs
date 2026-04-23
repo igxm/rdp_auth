@@ -171,6 +171,11 @@ pub struct CredentialProviderState {
     pub sms_resend_remaining: u32,
     /// 短信倒计时 generation。重复点击或后续真实 helper 重置倒计时时，旧刷新线程醒来后自退。
     pub sms_resend_generation: u64,
+    /// 首次短信发送是否已经延长过 MFA 等待窗口。
+    ///
+    /// 这个标记只属于当前 Credential Tile 生命周期：首次发送验证码时允许把等待窗口从
+    /// 默认配置值延长到 5 分钟，后续重发不能继续刷新超时，避免用户无限拖住 LogonUI。
+    pub sms_sent_timeout_extended: bool,
     /// 二次认证超时秒数。后续由 helper 策略快照下发，当前使用安全默认值 120 秒。
     pub mfa_timeout_seconds: u64,
     /// RDP 场景无 inbound serialization 时的等待窗口，避免锁屏后卡在无法放行的 MFA Tile。
@@ -210,6 +215,7 @@ impl Default for CredentialProviderState {
             status_message: "请选择二次认证方式".to_owned(),
             sms_resend_remaining: 0,
             sms_resend_generation: 0,
+            sms_sent_timeout_extended: false,
             mfa_timeout_seconds: mfa_config.timeout_seconds,
             missing_serialization_grace_seconds: mfa_config.missing_serialization_grace_seconds,
             sms_resend_seconds: mfa_config.sms_resend_seconds,
@@ -286,6 +292,7 @@ mod tests {
         assert!(state.disconnect_when_missing_serialization);
         assert_eq!(state.timeout_generation, 0);
         assert_eq!(state.sms_resend_generation, 0);
+        assert!(!state.sms_sent_timeout_extended);
         assert!(state.phone_editable);
         assert_eq!(
             state.available_auth_methods,

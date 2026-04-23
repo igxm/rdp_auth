@@ -16,14 +16,18 @@ use crate::session::disconnect_current_session;
 use crate::state::CredentialProviderState;
 
 pub fn start_mfa_timeout_timer(state: Arc<Mutex<CredentialProviderState>>) {
-    let (generation, timeout_seconds) = {
-        let mut state = state.lock().expect("provider state poisoned");
-        state.timeout_generation = state.timeout_generation.wrapping_add(1);
-        if state.timeout_generation == 0 {
-            state.timeout_generation = 1;
-        }
-        (state.timeout_generation, state.mfa_timeout_seconds)
+    let timeout_seconds = {
+        let state = state.lock().expect("provider state poisoned");
+        state.mfa_timeout_seconds
     };
+    start_mfa_timeout_timer_with_timeout(state, timeout_seconds);
+}
+
+pub fn start_mfa_timeout_timer_with_timeout(
+    state: Arc<Mutex<CredentialProviderState>>,
+    timeout_seconds: u64,
+) {
+    let generation = next_timeout_generation(&state);
 
     log_event(
         "MfaTimeout",
@@ -82,6 +86,15 @@ pub fn start_mfa_timeout_timer(state: Arc<Mutex<CredentialProviderState>>) {
             format!("timer_spawn_failed generation={generation} error={error}"),
         );
     }
+}
+
+fn next_timeout_generation(state: &Arc<Mutex<CredentialProviderState>>) -> u64 {
+    let mut state = state.lock().expect("provider state poisoned");
+    state.timeout_generation = state.timeout_generation.wrapping_add(1);
+    if state.timeout_generation == 0 {
+        state.timeout_generation = 1;
+    }
+    state.timeout_generation
 }
 
 pub fn start_missing_serialization_disconnect_timer(state: Arc<Mutex<CredentialProviderState>>) {

@@ -142,6 +142,11 @@ impl ICredentialProvider_Impl for RdpMfaProvider_Impl {
         state.has_inbound_serialization = copied.is_some();
         state.inbound_serialization = copied;
         state.remote_logon_credential = remote_logon_credential;
+        if state.has_inbound_serialization {
+            // 新的 RDP serialization 代表一次新的登录尝试；首次短信发送延长窗口的标记
+            // 必须随之重置，否则上一轮 Tile 状态会影响下一轮 fail closed 超时策略。
+            state.sms_sent_timeout_extended = false;
+        }
         let should_start_timeout = state.has_inbound_serialization;
         log_event(
             "SetSerialization",
