@@ -18,6 +18,7 @@ use crate::dirs::{
     LogDirectoryStatus, ensure_runtime_dirs, log_directory_status, runtime_dirs_status,
 };
 use crate::guid::{filter_clsid_string, provider_clsid_string};
+use crate::helper_probe::{HelperProbeStatus, probe_helper_startup};
 use crate::paths::validate_helper_exe_path;
 
 const PROVIDER_NAME: &str = "RDP Auth MFA Provider";
@@ -102,6 +103,7 @@ pub struct HealthReport {
     pub dll_exists: bool,
     pub helper_path: Option<PathBuf>,
     pub helper_exists: bool,
+    pub helper_startup: HelperProbeStatus,
     pub login_policy: LoginPolicy,
     pub app_config: ConfigSnapshot,
     pub runtime_dirs: String,
@@ -149,6 +151,7 @@ impl fmt::Display for HealthReport {
             writeln!(formatter, "helper 路径: 未配置")?;
             writeln!(formatter, "helper 文件: 缺失")?;
         }
+        writeln!(formatter, "helper 启动探测: {}", self.helper_startup)?;
         writeln!(formatter, "登录策略:\n{}", self.login_policy)?;
         writeln!(formatter, "业务配置:\n{}", self.app_config)?;
         writeln!(formatter, "{}", self.runtime_dirs)?;
@@ -355,6 +358,8 @@ pub fn health_check() -> Result<HealthReport, String> {
     let helper_exists = helper_path
         .as_ref()
         .is_some_and(|helper_path| helper_path.is_file());
+    let helper_startup =
+        probe_helper_startup(helper_path.as_deref(), std::time::Duration::from_secs(2));
 
     Ok(HealthReport {
         status,
@@ -363,6 +368,7 @@ pub fn health_check() -> Result<HealthReport, String> {
         dll_exists,
         helper_path,
         helper_exists,
+        helper_startup,
         login_policy: query_login_policy(),
         app_config: load_app_config_snapshot(),
         runtime_dirs: runtime_dirs_status(),

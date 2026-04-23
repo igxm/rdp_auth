@@ -26,6 +26,10 @@ cargo build --release -p register_tool
 .\target\release\register_tool.exe health
 ```
 
+`health` 会对注册表记录的 helper 做一次短启动探测；如果 `remote_auth.exe` 能启动，它会初始化
+`C:\ProgramData\rdp_auth\logs` 下的 helper 诊断日志，文件名类似 `remote_auth.log.2026-04-23`。
+探测失败时，优先检查 helper 路径、文件权限、运行时依赖以及是否从 LogonUI 可访问的本地磁盘位置安装。
+
 如果已经进入 `target\release` 目录：
 
 ```powershell

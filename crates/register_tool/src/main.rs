@@ -7,6 +7,7 @@
 mod cli;
 mod dirs;
 mod guid;
+mod helper_probe;
 mod paths;
 mod registry;
 
