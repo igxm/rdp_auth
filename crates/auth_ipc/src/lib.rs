@@ -8,6 +8,9 @@ use auth_core::AuthMethod;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub type Result<T> = std::result::Result<T, IpcCodecError>;
+pub type Error = IpcCodecError;
+
 /// helper 支持的请求类型。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -100,11 +103,11 @@ pub enum IpcCodecError {
 }
 
 impl IpcRequest {
-    pub fn to_json(&self) -> Result<String, IpcCodecError> {
+    pub fn to_json(&self) -> Result<String> {
         serde_json::to_string(self).map_err(|error| IpcCodecError::Serialize(error.to_string()))
     }
 
-    pub fn from_json(value: &str) -> Result<Self, IpcCodecError> {
+    pub fn from_json(value: &str) -> Result<Self> {
         serde_json::from_str(value).map_err(|error| IpcCodecError::Deserialize(error.to_string()))
     }
 }
@@ -136,11 +139,11 @@ impl IpcResponse {
         }
     }
 
-    pub fn to_json(&self) -> Result<String, IpcCodecError> {
+    pub fn to_json(&self) -> Result<String> {
         serde_json::to_string(self).map_err(|error| IpcCodecError::Serialize(error.to_string()))
     }
 
-    pub fn from_json(value: &str) -> Result<Self, IpcCodecError> {
+    pub fn from_json(value: &str) -> Result<Self> {
         serde_json::from_str(value).map_err(|error| IpcCodecError::Deserialize(error.to_string()))
     }
 }

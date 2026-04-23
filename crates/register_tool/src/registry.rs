@@ -152,8 +152,8 @@ impl fmt::Display for RegistrationStatus {
 pub fn register_provider(registration: &ProviderRegistration) -> Result<(), String> {
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     ensure_runtime_dirs()?;
-    ensure_default_login_policy()?;
-    ensure_default_app_config_file()?;
+    ensure_default_login_policy().map_err(|error| error.to_string())?;
+    ensure_default_app_config_file().map_err(|error| error.to_string())?;
 
     // LogonUI 通过这个路径枚举 Credential Provider。默认值只作为显示/诊断名称。
     let (provider_key, _) = hklm

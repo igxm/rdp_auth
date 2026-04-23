@@ -10,6 +10,7 @@ use std::time::UNIX_EPOCH;
 use winreg::RegKey;
 use winreg::enums::HKEY_LOCAL_MACHINE;
 
+use crate::error::{Error, Result};
 use crate::login_policy::{POLICY_REGISTRY_PATH, VALUE_CONFIG_PATH};
 use crate::protected_file::{ConfigFileMetadata, protect_config_bytes, unprotect_config_bytes};
 use crate::schema::AppConfig;
@@ -145,100 +146,91 @@ pub fn load_app_config() -> AppConfig {
 /// 导出当前加密配置为明文 TOML。
 ///
 /// 明文只允许在管理员显式维护时短暂出现，调用方不得把返回内容写入诊断日志。
-pub fn export_app_config_toml() -> Result<String, String> {
+pub fn export_app_config_toml() -> Result<String> {
     let path = load_config_path();
-    let protected_bytes = std::fs::read(&path)
-        .map_err(|error| format!("读取加密配置 `{}` 失败: {error}", path.display()))?;
-    let (plaintext, _) = unprotect_config_bytes(&protected_bytes)
-        .map_err(|error| format!("解密配置 `{}` 失败: {error}", path.display()))?;
-    let content =
-        String::from_utf8(plaintext).map_err(|error| format!("配置明文不是 UTF-8: {error}"))?;
+    let protected_bytes =
+        std::fs::read(&path).map_err(|error| Error::file("读取加密配置失败", &path, error))?;
+    let (plaintext, _) = unprotect_config_bytes(&protected_bytes)?;
+    let content = String::from_utf8(plaintext).map_err(Error::Utf8)?;
     normalize_config_toml(&content)
 }
 
-pub fn export_app_config_toml_to_path(output_path: &Path) -> Result<(), String> {
+pub fn export_app_config_toml_to_path(output_path: &Path) -> Result<()> {
     let content = export_app_config_toml()?;
     if let Some(parent) = output_path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
     {
         std::fs::create_dir_all(parent)
-            .map_err(|error| format!("创建导出目录 `{}` 失败: {error}", parent.display()))?;
+            .map_err(|error| Error::file("创建导出目录失败", parent, error))?;
     }
     std::fs::write(output_path, content)
-        .map_err(|error| format!("导出明文配置 `{}` 失败: {error}", output_path.display()))
+        .map_err(|error| Error::file("导出明文配置失败", output_path, error))
 }
 
-pub fn import_app_config_toml_from_path(input_path: &Path) -> Result<ConfigSnapshot, String> {
+pub fn import_app_config_toml_from_path(input_path: &Path) -> Result<ConfigSnapshot> {
     let content = std::fs::read_to_string(input_path)
-        .map_err(|error| format!("读取明文配置 `{}` 失败: {error}", input_path.display()))?;
+        .map_err(|error| Error::file("读取明文配置失败", input_path, error))?;
     import_app_config_toml(&content)
 }
 
-pub fn import_app_config_toml(content: &str) -> Result<ConfigSnapshot, String> {
+pub fn import_app_config_toml(content: &str) -> Result<ConfigSnapshot> {
     let normalized = normalize_config_toml(content)?;
-    let encrypted = protect_config_bytes(normalized.as_bytes())
-        .map_err(|error| format!("加密导入配置失败: {error}"))?;
+    let encrypted = protect_config_bytes(normalized.as_bytes())?;
     let path = load_config_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|error| format!("创建配置目录 `{}` 失败: {error}", parent.display()))?;
+            .map_err(|error| Error::file("创建配置目录失败", parent, error))?;
     }
     replace_encrypted_config(&path, &encrypted)?;
     Ok(load_app_config_snapshot())
 }
 
-fn normalize_config_toml(content: &str) -> Result<String, String> {
+fn normalize_config_toml(content: &str) -> Result<String> {
     let config = toml::from_str::<AppConfig>(content)
-        .map_err(|error| format!("TOML 配置解析失败: {error}"))?
+        .map_err(Error::TomlDeserialize)?
         .normalized();
-    toml::to_string_pretty(&config).map_err(|error| format!("生成标准 TOML 失败: {error}"))
+    toml::to_string_pretty(&config).map_err(Error::TomlSerialize)
 }
 
 /// 安装时创建默认加密 TOML 配置。已有文件不覆盖，避免污染管理员配置。
-pub fn ensure_default_app_config_file() -> Result<ConfigSnapshot, String> {
+pub fn ensure_default_app_config_file() -> Result<ConfigSnapshot> {
     let path = load_config_path();
     if path.exists() {
         return Ok(load_app_config_snapshot());
     }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|error| format!("创建配置目录 `{}` 失败: {error}", parent.display()))?;
+            .map_err(|error| Error::file("创建配置目录失败", parent, error))?;
     }
-    let content = toml::to_string_pretty(&AppConfig::default())
-        .map_err(|error| format!("生成默认配置失败: {error}"))?;
-    let encrypted = protect_config_bytes(content.as_bytes())
-        .map_err(|error| format!("加密默认配置失败: {error}"))?;
+    let content = toml::to_string_pretty(&AppConfig::default()).map_err(Error::TomlSerialize)?;
+    let encrypted = protect_config_bytes(content.as_bytes())?;
     std::fs::write(&path, encrypted)
-        .map_err(|error| format!("写入默认配置 `{}` 失败: {error}", path.display()))?;
+        .map_err(|error| Error::file("写入默认配置失败", &path, error))?;
     Ok(load_app_config_snapshot())
 }
 
-fn replace_encrypted_config(path: &Path, encrypted: &[u8]) -> Result<(), String> {
+fn replace_encrypted_config(path: &Path, encrypted: &[u8]) -> Result<()> {
     let temp_path = sibling_path_with_suffix(path, ".tmp");
     std::fs::write(&temp_path, encrypted)
-        .map_err(|error| format!("写入临时加密配置 `{}` 失败: {error}", temp_path.display()))?;
+        .map_err(|error| Error::file("写入临时加密配置失败", &temp_path, error))?;
 
     if path.exists() {
         let backup_path = next_available_backup_path(path);
         std::fs::rename(path, &backup_path).map_err(|error| {
             let _ = std::fs::remove_file(&temp_path);
-            format!(
-                "备份现有加密配置 `{}` 到 `{}` 失败: {error}",
-                path.display(),
-                backup_path.display()
-            )
+            Error::file("备份现有加密配置失败", &backup_path, error)
         })?;
         if let Err(error) = std::fs::rename(&temp_path, path) {
             let _ = std::fs::rename(&backup_path, path);
-            return Err(format!(
-                "写入新加密配置 `{}` 失败，已尝试恢复备份: {error}",
-                path.display()
-            ));
+            return Err(Error::ReplaceFailed {
+                path: path.to_path_buf(),
+                source: error,
+            });
         }
     } else {
         std::fs::rename(&temp_path, path)
-            .map_err(|error| format!("写入加密配置 `{}` 失败: {error}", path.display()))?;
+            .map_err(|error| Error::file("写入加密配置失败", path, error))?;
     }
 
     Ok(())
@@ -338,7 +330,8 @@ timeout_seconds = 180
     #[test]
     fn rejects_invalid_plaintext_config() {
         let error = normalize_config_toml("schema_version = \"bad\"").unwrap_err();
-        assert!(error.contains("TOML"));
+        assert!(error.to_string().contains("TOML"));
+        assert!(!error.to_string().contains("schema_version"));
     }
 
     #[test]

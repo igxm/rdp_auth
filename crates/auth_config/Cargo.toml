@@ -9,6 +9,7 @@ aes-gcm = "0.10.3"
 auth_core = { path = "../auth_core" }
 serde = { version = "1.0", features = ["derive"] }
 sha2 = "0.10.9"
+thiserror.workspace = true
 toml = "0.9.8"
 winreg = "0.56.0"
 

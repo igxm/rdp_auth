@@ -8,6 +8,7 @@ use sha2::{Digest, Sha256};
 use winreg::RegKey;
 use winreg::enums::HKEY_LOCAL_MACHINE;
 
+use crate::error::{Error, Result};
 use crate::login_policy::POLICY_REGISTRY_PATH;
 
 /// AES 配置加密使用的注册表机器码。
@@ -15,7 +16,7 @@ pub const VALUE_MACHINE_CODE: &str = "MachineCode";
 const MACHINE_GUID_PATH: &str = r"SOFTWARE\Microsoft\Cryptography";
 const VALUE_MACHINE_GUID: &str = "MachineGuid";
 
-pub fn ensure_machine_code() -> Result<String, String> {
+pub fn ensure_machine_code() -> Result<String> {
     if let Some(existing) = load_machine_code() {
         return Ok(existing);
     }
@@ -24,9 +25,9 @@ pub fn ensure_machine_code() -> Result<String, String> {
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     let (key, _) = hklm
         .create_subkey(POLICY_REGISTRY_PATH)
-        .map_err(|error| format!("创建机器码注册表项失败，是否使用管理员运行: {error}"))?;
+        .map_err(|error| Error::registry("创建机器码注册表项失败", error))?;
     key.set_value(VALUE_MACHINE_CODE, &machine_code)
-        .map_err(|error| format!("写入机器码失败: {error}"))?;
+        .map_err(|error| Error::registry("写入机器码失败", error))?;
     Ok(machine_code)
 }
 

@@ -64,14 +64,15 @@ fn run() -> Result<(), String> {
             print_line("已重新启用 Provider 枚举入口");
         }
         Command::ConfigExport { output_path } => {
-            export_app_config_toml_to_path(&output_path)?;
+            export_app_config_toml_to_path(&output_path).map_err(|error| error.to_string())?;
             print_line(&format!("已导出明文 TOML 配置: {}", output_path.display()));
             print_line(
                 "提示: 该文件包含管理员可编辑的明文配置，只用于短期维护；完成导入后请删除或妥善保护。",
             );
         }
         Command::ConfigImport { input_path } => {
-            let snapshot = import_app_config_toml_from_path(&input_path)?;
+            let snapshot =
+                import_app_config_toml_from_path(&input_path).map_err(|error| error.to_string())?;
             print_line(&format!(
                 "已导入并重新加密配置: {}",
                 snapshot.path.display()

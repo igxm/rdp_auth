@@ -10,6 +10,7 @@ use thiserror::Error;
 use tracing::debug;
 
 pub type Result<T> = std::result::Result<T, ApiError>;
+pub type Error = ApiError;
 
 /// API 层可匹配错误。Display 文案必须安全，不能包含手机号、验证码、密码、token 或原始响应体。
 #[derive(Debug, Clone, PartialEq, Eq, Error)]

@@ -8,6 +8,7 @@ use std::fmt;
 use winreg::RegKey;
 use winreg::enums::HKEY_LOCAL_MACHINE;
 
+use crate::error::{Error, Result};
 use crate::file_config::default_config_path;
 use crate::machine_code::ensure_machine_code;
 
@@ -112,12 +113,12 @@ pub fn load_login_policy() -> LoginPolicy {
 ///
 /// 安装工具调用这个函数，集中管理默认值，避免后续 register_tool 和 Filter 对默认策略
 /// 理解不一致。这里不覆盖已有值，方便管理员先手工调整策略后重新安装 DLL。
-pub fn ensure_default_login_policy() -> Result<LoginPolicy, String> {
+pub fn ensure_default_login_policy() -> Result<LoginPolicy> {
     let default_policy = LoginPolicy::default();
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     let (key, _) = hklm
         .create_subkey(POLICY_REGISTRY_PATH)
-        .map_err(|error| format!("创建登录策略注册表项失败，是否使用管理员运行: {error}"))?;
+        .map_err(|error| Error::registry("创建登录策略注册表项失败", error))?;
 
     write_bool_value_if_missing(&key, VALUE_ENABLE_RDP_MFA, default_policy.enable_rdp_mfa)?;
     write_bool_value_if_missing(
@@ -142,21 +143,21 @@ fn read_bool_value(key: &RegKey, name: &str, default_value: bool) -> bool {
         .unwrap_or(default_value)
 }
 
-fn write_bool_value_if_missing(key: &RegKey, name: &str, value: bool) -> Result<(), String> {
+fn write_bool_value_if_missing(key: &RegKey, name: &str, value: bool) -> Result<()> {
     if key.get_value::<u32, _>(name).is_ok() {
         return Ok(());
     }
 
     let dword_value = if value { 1_u32 } else { 0_u32 };
     key.set_value(name, &dword_value)
-        .map_err(|error| format!("写入登录策略 `{name}` 失败: {error}"))
+        .map_err(|error| Error::registry("写入登录策略失败", error))
 }
 
-fn write_string_value_if_missing(key: &RegKey, name: &str, value: &str) -> Result<(), String> {
+fn write_string_value_if_missing(key: &RegKey, name: &str, value: &str) -> Result<()> {
     if key.get_value::<String, _>(name).is_ok() {
         return Ok(());
     }
 
     key.set_value(name, &value)
-        .map_err(|error| format!("写入登录策略 `{name}` 失败: {error}"))
+        .map_err(|error| Error::registry("写入登录策略失败", error))
 }

@@ -110,6 +110,7 @@ dependencies = [
  "auth_core",
  "serde",
  "sha2",
+ "thiserror",
  "toml",
  "winreg",
 ]

@@ -46,7 +46,7 @@
 - [x] 确定错误处理主方案：`auth_config`、`auth_ipc`、`auth_api`、`credential_provider` 等库 crate 使用 `thiserror` 定义领域错误；`remote_auth`、`register_tool` 等 bin crate 使用 `anyhow::Result` 汇总错误并补充人类可读上下文。
 - [x] 在 workspace 统一增加日志与错误处理依赖：`tracing`、`tracing-subscriber`、`tracing-appender`、`thiserror`、`anyhow`；按 crate 职责选择性引用，避免 Credential Provider DLL 引入不必要运行时负担。
 - [x] 新增 helper 统一诊断日志模块：定义日志目录、文件名、按天轮转、非阻塞 guard 生命周期、脱敏字段约定和初始化幂等策略；业务审计日志后续单独实现。
-- [ ] 新增统一错误模块：各库 crate 定义 `Error` / `Result<T>` 类型别名，错误枚举必须包含安全的 Display 文案和可记录的诊断上下文，禁止把敏感输入直接放入错误消息。
+- [x] 新增统一错误模块：各库 crate 定义 `Error` / `Result<T>` 类型别名，错误枚举必须包含安全的 Display 文案和可记录的诊断上下文，禁止把敏感输入直接放入错误消息。
 
 ## 总体目标
 
