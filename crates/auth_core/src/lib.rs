@@ -65,6 +65,27 @@ impl MfaState {
     pub fn allows_serialization(&self) -> bool {
         matches!(self, Self::Verified)
     }
+
+    /// 判断当前状态是否仍在等待外部动作或 helper 响应。
+    pub fn is_pending(&self) -> bool {
+        matches!(
+            self,
+            Self::Idle | Self::SendingCode | Self::WaitingInput | Self::Verifying
+        )
+    }
+
+    /// 判断当前状态是否已经结束。失败同样是终态，但不能放行凭证。
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, Self::Verified | Self::Failed(_))
+    }
+
+    /// 返回失败时可展示的简短文案。非失败状态不暴露诊断细节。
+    pub fn failure_message(&self) -> Option<&str> {
+        match self {
+            Self::Failed(message) => Some(message.as_str()),
+            _ => None,
+        }
+    }
 }
 
 /// 跨 crate 共享的认证错误类型。
@@ -90,6 +111,37 @@ mod tests {
         assert!(MfaState::Verified.allows_serialization());
         assert!(!MfaState::Idle.allows_serialization());
         assert!(!MfaState::Failed("验证码错误".to_owned()).allows_serialization());
+    }
+
+    #[test]
+    fn mfa_state_tracks_pending_and_terminal_states() {
+        let pending_states = [
+            MfaState::Idle,
+            MfaState::SendingCode,
+            MfaState::WaitingInput,
+            MfaState::Verifying,
+        ];
+        for state in pending_states {
+            assert!(state.is_pending());
+            assert!(!state.is_terminal());
+            assert!(!state.allows_serialization());
+        }
+
+        assert!(!MfaState::Verified.is_pending());
+        assert!(MfaState::Verified.is_terminal());
+        assert!(MfaState::Verified.allows_serialization());
+
+        let failed = MfaState::Failed("短信验证码错误".to_owned());
+        assert!(!failed.is_pending());
+        assert!(failed.is_terminal());
+        assert!(!failed.allows_serialization());
+        assert_eq!(failed.failure_message(), Some("短信验证码错误"));
+    }
+
+    #[test]
+    fn non_failed_states_do_not_expose_failure_message() {
+        assert_eq!(MfaState::Idle.failure_message(), None);
+        assert_eq!(MfaState::Verified.failure_message(), None);
     }
 
     #[test]
