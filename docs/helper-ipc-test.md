@@ -20,6 +20,7 @@ cargo test --workspace
 - Credential Provider 在 `ReportResult` 非成功或用户取消时，会用短超时 IPC 发送 `clear_session_state`，清理 helper 内存态 session 标记；清理失败只记录脱敏诊断日志，不改变 fail closed 路径。
 - helper 命名管道 transport 可以把单条 JSON 请求路由到 session 状态，并拒绝非法请求且不回显敏感字段。
 - `get_policy_snapshot` 响应只包含脱敏手机号，例如 `138****8888`，不包含完整手机号。
+- 后续多手机号选择框接入后，`get_policy_snapshot` 只能返回 `phone_choice_id` 和脱敏手机号列表，不能返回完整手机号。
 - 未知 IPC 请求类型会返回结构化解析错误。
 - helper 内存态 `SessionAuthState` 可以标记已认证 session。
 - TTL 过期后 session 状态自动失效。
@@ -38,6 +39,7 @@ cargo test --workspace
 - helper 返回非法 JSON 时，CP 走 fail closed，不放行。
 - helper 不可用、命名管道不存在或 IPC 超时时，CP 不长时间阻塞 LogonUI。
 - `get_policy_snapshot` 返回认证方式列表、脱敏手机号、字段不可编辑状态和超时配置；响应不得包含完整手机号。
+- 多手机号选择框接入后，`get_policy_snapshot` 返回脱敏手机号选择项和非敏感 `phone_choice_id`；`send_sms` / `verify_sms` 只允许携带 `phone_choice_id`，不得携带完整手机号。
 - Credential Provider 枚举 Tile 前会用短超时读取 `get_policy_snapshot`；helper 不可用时应回退本地安全默认值，不能卡住 LogonUI，也不能放行未通过 MFA 的登录。
 
 ## 后续 VM 测试
@@ -86,9 +88,18 @@ Windows session notification 接入后，在 VM 中验证：
 5. 检查 CP 和 helper 诊断日志，只允许出现脱敏手机号或长度/布尔状态，不得出现完整手机号、用户名、密码、验证码、token 或 serialization。
 6. 停止 helper 后重复进入 Tile，确认 LogonUI 不长时间卡住，CP 使用本地安全默认策略继续显示认证方式，并且未完成 MFA 时仍不会放行。
 
+后续多手机号选择框手工验证：
+
+1. 在 VM 快照中通过 `register_tool config export` 导出配置，设置 `phone.numbers = ["13812348888", "13912349999"]`，再通过 `register_tool config import` 导入。
+2. 启动 `remote_auth` 常驻 helper，确认它输出 `remote_auth helper 已启动`。
+3. 通过 RDP + NLA 进入 Credential Provider Tile，确认手机号选择框只显示 `138****8888`、`139****9999` 这类脱敏文本。
+4. 选择第二个脱敏手机号并点击发送验证码；CP 发给 helper 的请求只能包含 `phone_choice_id`，不能包含完整手机号。
+5. 检查 CP 和 helper 诊断日志，只允许出现请求类型、session、`phone_choice_id`、数量或脱敏手机号，不得出现完整手机号、用户名、密码、验证码、token 或 serialization。
+6. 修改配置删除第二个号码并重启 helper 后，旧 `phone_choice_id` 必须 fail closed，用户可见提示为配置无效或需要重新选择，不得使用过期映射。
+
 ## 安全边界
 
 - session 状态只保存在 helper 内存中，不写注册表、不写状态文件。
 - IPC 响应只返回布尔值、状态码、TTL/时间戳和脱敏策略。
-- 不通过 IPC 发送或返回用户名、完整手机号、密码、token 或 RDP serialization；短信验证码只用于短超时校验请求，禁止写入日志。
+- 不通过 IPC 发送或返回用户名、完整手机号、密码、token 或 RDP serialization；多手机号选择只能传非敏感 `phone_choice_id`，短信验证码只用于短超时校验请求，禁止写入日志。
 - Credential Provider 只做短超时 IPC 调用，不直接读取配置手机号、远程配置缓存或发起网络请求。

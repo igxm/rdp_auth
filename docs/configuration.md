@@ -100,6 +100,31 @@ diagnostic_level = "info"
 
 当前 `auth_config` 已落地的 schema 包含 `[auth_methods]`、`[mfa]`、`[phone]`、`[api]`、`[audit]`、`[remote_config]`、`[logging]`。真实 API 调用、远程配置拉取、远程缓存加密落盘和完整性校验属于 helper/auth_api 后续任务，Credential Provider 不直接读取这些业务配置字段。
 
+## 多手机号选择框方案（后续）
+
+后续如果需要在二次认证页面提供多个手机号选择框，安全边界仍保持不变：完整手机号只能由 helper 从加密配置读取并短暂停留在 helper 内存中，不能进入 Credential Provider、IPC payload、诊断日志或错误文本。Credential Provider 只拿到可渲染的脱敏选项和非敏感选择 ID。
+
+建议配置保持单手机号向后兼容，同时新增多手机号列表：
+
+```toml
+[phone]
+source = "config"
+number = "13812348888"
+numbers = ["13812348888", "13912349999"]
+validation_pattern = "^1[3-9]\\d{9}$"
+```
+
+归一化规则建议如下：
+
+- `number` 保留为兼容字段；`numbers` 存在时优先使用 `numbers`，否则把合法的 `number` 视为单元素列表。
+- 每个号码在 helper 侧按统一规则校验、去重和脱敏；无有效号码时短信认证 fail closed，并向 CP 返回可展示错误。
+- helper 为每个有效号码生成不包含手机号数字的选择 ID，例如 `phone-0`、`phone-1` 或带配置版本的临时 ID。
+- 策略快照只包含 `{ id, masked }`，例如 `{ id = "phone-0", masked = "138****8888" }`。
+- `send_sms` / `verify_sms` 请求只携带 `phone_choice_id` 和验证码等必要字段，不携带完整手机号。
+- helper 收到 `phone_choice_id` 后在本进程内映射到完整手机号，再调用短信 API；找不到 ID、配置变化或号码非法时必须 fail closed。
+
+Credential Provider UI 可以把手机号字段从普通文本升级为组合框，但组合框项只能显示脱敏手机号。CP 状态中只能保存选中索引、选择 ID 和脱敏展示值，不能保存完整手机号。
+
 ## 实现拆分
 
 - `register_tool`：安装时创建配置目录、生成/保存机器码并创建默认 AES 加密 TOML；已有文件不覆盖；注册表只写最小引导项和机器码；提供明文 TOML 的导入/导出维护命令。
@@ -112,6 +137,6 @@ diagnostic_level = "info"
 - 配置文件解密或解析失败时记录脱敏诊断日志，并回退安全默认值。
 - `mfa.timeout_seconds` 过小、过大或非法时回退 120 秒；首次点击发送短信验证码后，当前二次认证页面等待窗口会重置为 300 秒，后续重发不再刷新该超时。
 - 认证方式全部关闭时自动恢复手机验证码和二次密码，不能导致绕过 MFA。
-- 手机号只能由 helper 从加密配置读取和校验，Credential Provider 不再提供手机号输入框，策略快照只包含脱敏手机号；旧配置中的 `phone.source = "input"` 会被归一化为 `config`。明文导出 TOML 会短暂包含完整手机号，必须按敏感文件处理。
+- 手机号只能由 helper 从加密配置读取和校验，Credential Provider 不再提供手机号输入框，策略快照只包含脱敏手机号或脱敏手机号选择项；旧配置中的 `phone.source = "input"` 会被归一化为 `config`。明文导出 TOML 会短暂包含完整手机号，必须按敏感文件处理。
 - 远程配置必须带版本、更新时间、TTL 和签名或 HMAC；校验失败不得生效。
 - 单元测试和 VM 测试必须覆盖 AES 加密文件读取、错误密文、错误机器码、旧版明文迁移和导入/导出；Windows Server 2008 R2 兼容性暂不纳入当前测试目标。

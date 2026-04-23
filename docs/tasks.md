@@ -163,6 +163,9 @@
 - [x] helper 读取手机号模式：手机号字段显示 helper 返回的脱敏格式，例如 `138****8888`，并设置为不可编辑；Credential Provider 不接触真实手机号。
 - [x] 取消手动输入手机号模式；旧版 `phone.source = "input"` 仅作为导入兼容值，运行期归一化为配置手机号。
 - [x] 手机号配置无效时不允许进入发送短信流程，刷新状态提示为“手机号配置无效，请联系管理员”。
+- [ ] 设计多手机号选择框：Credential Provider 只显示 helper 下发的脱敏手机号列表，不接收、不保存、不回传完整手机号。
+- [ ] Credential Provider 将手机号展示字段升级为选择框时，只保存选中索引、非敏感 `phone_choice_id` 和脱敏显示值；旧字段 ID 和 LogonUI 缓存行为需在 VM 中回归验证。
+- [ ] 多手机号选择变化后刷新发送短信按钮和状态提示；无可用手机号时禁用发送短信或返回“手机号配置无效，请联系管理员”，不得回退到手动输入。
 - [x] 删除底部重复状态区域，避免登录按钮下方再出现一块“第二部分”内容。
 - [x] 发送验证码后立即把按钮切换为禁用态，并显示 `重新发送(60)`。
 - [x] 实现短信验证码重新发送倒计时递减，并在 60 秒后恢复为可点击 `发送验证码`。（当前通过 LogonUI events 只刷新发送短信按钮；后续接入 helper 后可改为 helper 心跳驱动）
@@ -198,10 +201,14 @@
 - [x] 所有 session 状态 IPC 必须设置极短超时；helper 不可用、超时或返回非法响应时，Credential Provider 回退到 fail closed 策略，不得放行。
 - [x] IPC 响应只返回布尔值、状态码、TTL/时间戳等非敏感信息，不返回用户标识、手机号、密码或原始凭证材料。
 - [x] 支持 `get_policy_snapshot` 请求：helper 读取本地加密配置后，返回 CP 可渲染的脱敏策略快照，包括认证方式列表、手机号来源、脱敏手机号、手机号字段是否可编辑和超时配置；远程配置和用户可见提示待后续扩展协议字段。
+- [ ] 扩展 `get_policy_snapshot`：新增 `phone_choices: [{ id, masked }]` 或等效结构；`id` 不得包含完整手机号、用户名或其它敏感信息，`masked` 只能是脱敏手机号。
 - [x] 支持 `send_sms` 请求。
 - [x] `send_sms` 请求不携带手机号；helper 使用解密配置中已校验过的真实手机号，避免真实手机号进入 IPC。
+- [ ] 扩展 `send_sms` 请求：携带 `phone_choice_id`，helper 在本进程内映射到完整手机号后发送短信；找不到 ID、配置变更或号码非法时 fail closed。
 - [x] helper 对手机号再次执行格式校验，禁止只依赖 Credential Provider UI 校验；手机号非法时返回可展示错误且不调用真实短信 API。
 - [x] helper 实现配置手机号读取和校验：读取解密配置中的 `phone.number`，校验 `^1[3-9]\d{9}$`，只向 CP 返回脱敏手机号和不可编辑标记，日志不得记录完整手机号。
+- [ ] helper 支持配置多个手机号：读取 `phone.numbers`，兼容旧 `phone.number`，执行 trim、去空、去重、格式校验和脱敏；真实手机号只保存在 helper 内存中。
+- [ ] helper 为每个有效手机号生成非敏感 `phone_choice_id`，并维护 `phone_choice_id -> 完整手机号` 的内存映射；该映射不得写日志、IPC 或落盘。
 - [x] helper 为每次 MFA 请求生成审计上下文 `AuditContext`：包含 request_id、session_id、client_ip、host_public_ip、host_private_ips、host_uuid 和认证方式。
 - [ ] helper 采集 RDP 连接用户 IP：优先按当前 Windows session 查询客户端地址；采集失败时填充 `unknown`，并记录脱敏诊断原因。
 - [x] helper 采集本机内网 IP 列表：枚举活动网卡，过滤 loopback、link-local、未启用网卡和明显无效地址，支持多网卡多 IP；失败或无可用内网地址时回退为 `unknown`。
@@ -242,6 +249,8 @@
 - [x] 定义 helper IPC 超时配置，例如 `mfa.helper_ipc_timeout_ms`，默认应足够短，避免 LogonUI 被 helper 卡住。
 - [x] 定义手机号来源配置，例如 `phone.source = "config"`；旧版 `input` 仅保留解析兼容，运行期会归一化为 `config`。
 - [x] 定义配置手机号字段 `phone.number`，由 helper 从解密配置读取，Credential Provider 不接收完整手机号。
+- [ ] 定义多手机号配置字段 `phone.numbers`，用于管理员配置多个短信接收号码；`phone.number` 继续作为单手机号兼容字段。
+- [ ] `auth_config` 归一化多手机号配置：`numbers` 优先，缺失时从 `number` 生成单元素列表；保留原始完整号码只在解密后的配置结构中，Display/health 不输出完整手机号。
 - [x] `auth_core` 提供手机号校验和脱敏函数：合法手机号按 `138****8888` 格式展示，非法手机号不暴露前后缀。
 - [x] `auth_config` 只定义手机号来源、配置手机号、优先级和错误类型；真实手机号校验和 fail closed 决策由 helper 执行。
 - [x] 定义公网 IP 查询配置，例如 `api.public_ip_endpoint`、`api.public_ip_timeout_seconds`、`api.require_public_ip_for_sms`，默认公网 IP 获取失败不阻断短信。
@@ -387,6 +396,10 @@
 - [x] 单元测试：helper 策略快照在配置手机号模式下只返回脱敏手机号，且手机号字段不可编辑。
 - [x] 单元测试：取消手动输入手机号模式后，旧版可编辑策略会被 CP 强制收敛为只读展示，短信 IPC 不携带手机号。
 - [x] 单元测试：`get_policy_snapshot` 不包含配置模式真实手机号，只包含脱敏手机号、字段可编辑状态和策略来源。
+- [ ] 单元测试：`phone.numbers` 解析、归一化、去重和 fallback 到旧 `phone.number`，非法号码不会进入 helper 可用列表。
+- [ ] 单元测试：多手机号策略快照只包含 `phone_choice_id` 和脱敏手机号，不包含完整手机号。
+- [ ] 单元测试：`send_sms` / `verify_sms` 只携带 `phone_choice_id`，helper 用该 ID 映射完整手机号；未知 ID、空列表和非法配置都 fail closed。
+- [ ] 单元测试：Credential Provider 多手机号选择框只保存脱敏展示值和 `phone_choice_id`，选择变化不会把完整手机号写入状态或日志。
 - [x] 单元测试：本机内网 IP 枚举会过滤 loopback、link-local、公网地址和明显无效地址，并保留多网卡有效内网地址。
 - [ ] 单元测试：公网 IP 获取失败时按策略返回 `unknown` 或 fail closed。
 - [x] 单元测试：审计日志字段序列化包含 client_ip、host_public_ip、host_private_ips、host_uuid、session_id，且不包含手机号、验证码、密码、token。
@@ -425,6 +438,7 @@
 - [ ] VM 测试：helper 重启后内存状态丢失时，系统仍按首次登录等待窗口处理，不得放行孤立 MFA。
 - [ ] VM 测试：session logoff/disconnect 后 helper 清理状态，后续新 session 不得复用旧认证标记。
 - [ ] VM 测试：短信按钮点击后逐秒更新 `重新发送(n)`，归零后恢复 `发送验证码` 并可再次点击。
+- [ ] VM 测试：配置多个手机号时，Credential Provider 显示脱敏手机号选择框；选择第二个号码后发送短信，CP/helper 日志和 IPC dump 不包含完整手机号。
 - [ ] VM 测试：安装 Tauri 管理 GUI 后，RDP 首次登录、锁屏返回断开、MFA 超时断开和 helper IPC 超时行为不发生变化。
 - [ ] VM 测试：Windows Server 2008 R2 暂不纳入当前测试目标；如未来恢复兼容目标，再验证机器码注册表写入、AES 加密配置读取和重启后解密。
 - [ ] VM 测试：服务端不可达时默认拒绝登录。
@@ -437,6 +451,7 @@
 - [ ] 验证码、二次密码、token 不写日志。
 - [ ] 手机号必须按脱敏格式写入 UI、诊断日志和 API 日志；禁止记录配置文件中的完整手机号。
 - [x] 配置模式真实手机号只能由 helper 从解密配置读取并短暂保存在内存中；Credential Provider、诊断日志、策略快照和远程配置缓存不得保存完整手机号。
+- [ ] 多手机号选择只允许使用非敏感 `phone_choice_id` 跨 CP/helper 边界；禁止在 IPC、CP 状态、诊断日志、错误文本或策略快照中传递完整手机号。
 - [ ] client_ip、host_public_ip、host_private_ips 作为审计字段管理；诊断日志是否记录完整 IP 必须受配置控制。
 - [ ] 远程配置必须校验来源和完整性，至少包含版本号、更新时间、TTL 和签名或 HMAC；校验失败不得生效。
 - [ ] 远程配置下发不得绕过 MFA、不得关闭所有认证方式、不得禁用 fail closed 安全默认值。
