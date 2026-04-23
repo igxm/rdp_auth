@@ -17,6 +17,7 @@ cargo test --workspace
 - `auth_ipc` 请求/响应 JSON 序列化和反序列化。
 - `mark_session_authenticated`、`has_authenticated_session`、`clear_session_state` 等 session 状态请求可以稳定编码。
 - Credential Provider 侧 `ReportResult status=0` 使用的 `mark_session_authenticated` 请求只包含当前 Windows session id，不携带用户名、手机号、密码、验证码、token 或 serialization。
+- Credential Provider 在 `ReportResult` 非成功或用户取消时，会用短超时 IPC 发送 `clear_session_state`，清理 helper 内存态 session 标记；清理失败只记录脱敏诊断日志，不改变 fail closed 路径。
 - helper 命名管道 transport 可以把单条 JSON 请求路由到 session 状态，并拒绝非法请求且不回显敏感字段。
 - `get_policy_snapshot` 响应只包含脱敏手机号，例如 `138****8888`，不包含完整手机号。
 - 未知 IPC 请求类型会返回结构化解析错误。
@@ -57,7 +58,9 @@ Windows session notification 接入后，在 VM 中验证：
 2. 启动 `target\debug\remote_auth.exe`，确认输出 `remote_auth helper 已启动`。
 3. 通过 `\\.\pipe\rdp_auth_helper` 写入 `{"type":"mark_session_authenticated","session_id":42}`，确认响应 `ok=true`。
 4. 再写入 `{"type":"has_authenticated_session","session_id":42}`，确认响应 payload 中 `authenticated=true` 且 `ttl_remaining_seconds` 不为空。
-5. 停止 `remote_auth.exe`，确认进程退出后不会残留测试 helper。
+5. 写入 `{"type":"clear_session_state","session_id":42}`，确认响应 `ok=true`。
+6. 再次写入 `{"type":"has_authenticated_session","session_id":42}`，确认 payload 中 `authenticated=false` 且 `ttl_remaining_seconds` 为空。
+7. 停止 `remote_auth.exe`，确认进程退出后不会残留测试 helper。
 
 验证 helper 未启动时的失败路径不会拖慢登录链路：
 

@@ -157,6 +157,41 @@ mod tests {
     }
 
     #[test]
+    fn routes_session_clear_after_mark() {
+        let now = Instant::now();
+        let mut sessions = SessionAuthState::new(Duration::from_secs(60));
+        let policy = policy_context_from_config(&AppConfig::default());
+
+        let mark = handle_request(
+            IpcRequest::MarkSessionAuthenticated { session_id: 7 },
+            &mut sessions,
+            now,
+            policy.clone(),
+        );
+        assert!(mark.ok);
+
+        let clear = handle_request(
+            IpcRequest::ClearSessionState { session_id: 7 },
+            &mut sessions,
+            now,
+            policy.clone(),
+        );
+        assert!(clear.ok);
+
+        let query = handle_request(
+            IpcRequest::HasAuthenticatedSession { session_id: 7 },
+            &mut sessions,
+            now,
+            policy,
+        );
+        let Some(IpcResponsePayload::SessionState(state)) = query.payload else {
+            panic!("expected session state payload");
+        };
+        assert!(!state.authenticated);
+        assert_eq!(state.ttl_remaining_seconds, None);
+    }
+
+    #[test]
     fn routes_post_login_log_request() {
         let now = Instant::now();
         let mut sessions = SessionAuthState::new(Duration::from_secs(60));

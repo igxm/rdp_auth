@@ -56,6 +56,15 @@ pub fn mark_current_session_authenticated(timeout: Duration) -> Result<(), Helpe
     send_helper_request(mark_session_authenticated_request(session_id), timeout).map(|_| ())
 }
 
+/// 通知 helper 清理当前 Windows session 的内存态认证标记。
+///
+/// 该请求只携带 session id，不包含用户名、手机号、验证码或 serialization；用于登录失败、
+/// 用户取消等 fail closed 路径，避免 helper 内存中残留的成功状态影响后续 LogonUI 判断。
+pub fn clear_current_session_state(timeout: Duration) -> Result<(), HelperClientError> {
+    let session_id = current_session_id().map_err(HelperClientError::SessionId)?;
+    send_helper_request(clear_session_state_request(session_id), timeout).map(|_| ())
+}
+
 /// 查询 helper 是否仍持有当前 session 的已认证标记。
 ///
 /// 该结果只能用于选择缺失 serialization 的等待/断开策略，不能作为放行登录的依据；
@@ -129,6 +138,10 @@ fn mark_session_authenticated_request(session_id: u32) -> IpcRequest {
     IpcRequest::MarkSessionAuthenticated { session_id }
 }
 
+fn clear_session_state_request(session_id: u32) -> IpcRequest {
+    IpcRequest::ClearSessionState { session_id }
+}
+
 fn query_session_authenticated_request(
     session_id: u32,
     timeout: Duration,
@@ -165,9 +178,19 @@ pub fn log_mark_result(result: Result<(), HelperClientError>) {
     }
 }
 
+/// 记录 helper 清理 session 状态结果。清理失败不能改变 CP 的 fail closed 主流程。
+pub fn log_clear_result(result: Result<(), HelperClientError>) {
+    match result {
+        Ok(()) => log_event("HelperIpc", "clear_session_state_ok"),
+        Err(error) => log_event("HelperIpc", format!("clear_session_state_failed {error}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{HelperClientError, mark_session_authenticated_request};
+    use super::{
+        HelperClientError, clear_session_state_request, mark_session_authenticated_request,
+    };
     use auth_ipc::{
         IpcRequest, IpcResponse, IpcResponsePayload, PolicySnapshot, SessionStateResponse,
     };
@@ -185,6 +208,18 @@ mod tests {
                 .to_json()
                 .unwrap()
                 .contains("mark_session_authenticated")
+        );
+    }
+
+    #[test]
+    fn builds_clear_session_state_request() {
+        let request = clear_session_state_request(7);
+
+        assert_eq!(request, IpcRequest::ClearSessionState { session_id: 7 });
+        assert!(request.to_json().unwrap().contains("clear_session_state"));
+        assert_eq!(
+            IpcRequest::from_json(&request.to_json().unwrap()).unwrap(),
+            request
         );
     }
 

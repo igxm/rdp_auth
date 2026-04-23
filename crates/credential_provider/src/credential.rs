@@ -23,7 +23,10 @@ use windows::core::{BOOL, Error, IUnknownImpl, PCWSTR, PWSTR, Ref, Result, imple
 
 use crate::diagnostics::log_event;
 use crate::fields::MfaField;
-use crate::helper_client::{log_mark_result, mark_current_session_authenticated};
+use crate::helper_client::{
+    clear_current_session_state, log_clear_result, log_mark_result,
+    mark_current_session_authenticated,
+};
 use crate::memory::alloc_wide_string;
 use crate::session::disconnect_current_session;
 use crate::state::{CredentialProviderState, RDP_MFA_PROVIDER_CLSID};
@@ -419,6 +422,7 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
                 Ok(())
             }
             MfaField::Cancel => {
+                let timeout_ms = state.helper_ipc_timeout_ms;
                 state.mfa_state = MfaState::Failed("用户取消二次认证".to_owned());
                 state.status_message = "已取消二次认证".to_owned();
                 log_event(
@@ -426,6 +430,9 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
                     "cancel_clicked disconnect_current_session",
                 );
                 drop(state);
+                log_clear_result(clear_current_session_state(Duration::from_millis(
+                    timeout_ms,
+                )));
                 self.refresh_visible_fields()?;
                 // 取消按钮在 RDP 登录场景中应结束这次远程登录尝试。这里走
                 // WTSDisconnectSession 断开当前会话，而不是返回伪造凭证或假装登录失败。
@@ -573,14 +580,18 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
                 status.0, sub_status.0
             ),
         );
+        let timeout_ms = {
+            self.state
+                .lock()
+                .expect("credential state poisoned")
+                .helper_ipc_timeout_ms
+        };
         if status.0 == 0 {
-            let timeout_ms = {
-                self.state
-                    .lock()
-                    .expect("credential state poisoned")
-                    .helper_ipc_timeout_ms
-            };
             log_mark_result(mark_current_session_authenticated(Duration::from_millis(
+                timeout_ms,
+            )));
+        } else {
+            log_clear_result(clear_current_session_state(Duration::from_millis(
                 timeout_ms,
             )));
         }

@@ -192,6 +192,7 @@
 - [x] `auth_ipc` 定义 JSON 请求响应协议。
 - [x] `auth_ipc` 增加 `mark_session_authenticated` 请求：Credential Provider 在 `ReportResult status=0` 后通知 helper 标记当前 session 已完成 RDP MFA。
 - [x] `credential_provider` 在 `ReportResult status=0` 后按 `mfa.helper_ipc_timeout_ms` 尝试通过短超时 helper IPC 写入 `mark_session_authenticated` 请求；helper 不可用时只记录脱敏诊断日志，不影响 LogonUI。
+- [x] `credential_provider` 在 `ReportResult` 非成功或用户取消时按短超时 helper IPC 写入 `clear_session_state` 请求；清理失败只记录脱敏诊断日志，不改变 fail closed 路径。
 - [x] `auth_ipc` 增加 `has_authenticated_session` 请求：Credential Provider 在 RDP 会话无 inbound serialization 时查询 helper，命中则直接走短等待/立即断开策略。
 - [x] `auth_ipc` 增加 `clear_session_state` 请求：Credential Provider 或 register_tool 可请求清理指定 session 状态，用于断开、卸载或异常恢复。
 - [x] 所有 session 状态 IPC 必须设置极短超时；helper 不可用、超时或返回非法响应时，Credential Provider 回退到 fail closed 策略，不得放行。

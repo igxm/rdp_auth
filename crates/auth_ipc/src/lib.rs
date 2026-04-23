@@ -164,6 +164,11 @@ mod tests {
 
         assert!(json.contains("mark_session_authenticated"));
         assert_eq!(IpcRequest::from_json(&json).unwrap(), request);
+
+        let clear = IpcRequest::ClearSessionState { session_id: 42 };
+        let json = clear.to_json().unwrap();
+        assert!(json.contains("clear_session_state"));
+        assert_eq!(IpcRequest::from_json(&json).unwrap(), clear);
     }
 
     #[test]
