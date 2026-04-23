@@ -17,6 +17,7 @@ cargo test --workspace
 - `auth_ipc` 请求/响应 JSON 序列化和反序列化。
 - `mark_session_authenticated`、`has_authenticated_session`、`clear_session_state` 等 session 状态请求可以稳定编码。
 - Credential Provider 侧 `ReportResult status=0` 使用的 `mark_session_authenticated` 请求只包含当前 Windows session id，不携带用户名、手机号、密码、验证码、token 或 serialization。
+- helper 命名管道 transport 可以把单条 JSON 请求路由到 session 状态，并拒绝非法请求且不回显敏感字段。
 - `get_policy_snapshot` 响应只包含脱敏手机号，例如 `138****8888`，不包含完整手机号。
 - 未知 IPC 请求类型会返回结构化解析错误。
 - helper 内存态 `SessionAuthState` 可以标记已认证 session。
@@ -29,7 +30,7 @@ cargo test --workspace
 
 命名管道服务端和客户端接入后，新增以下测试：
 
-- 启动 `remote_auth` mock helper 后，CP 客户端可以在短超时内完成一次 JSON request/response。
+- 启动 `remote_auth` helper 后，CP 客户端可以在短超时内写入一次 JSON 请求；需要响应的后续 CP 请求再读取一条 JSON response。
 - RDP 登录成功后，`credential_provider.log` 出现 `ReportResult status=0x00000000`，随后出现 `HelperIpc mark_session_authenticated_ok`；如果 helper 未启动，只允许出现 `HelperIpc mark_session_authenticated_failed`，且不得影响 Windows 登录结果。
 - `mark_session_authenticated` 后，`has_authenticated_session` 命中同一 session。
 - `clear_session_state` 后，`has_authenticated_session` 不再命中。
@@ -49,7 +50,15 @@ Windows session notification 接入后，在 VM 中验证：
 
 ### 当前手工验证步骤
 
-在命名管道服务端完成前，先验证失败路径不会拖慢登录链路：
+本地命名管道冒烟：
+
+1. 执行 `cargo build -p remote_auth`。
+2. 启动 `target\debug\remote_auth.exe`，确认输出 `remote_auth helper 已启动`。
+3. 通过 `\\.\pipe\rdp_auth_helper` 写入 `{"type":"mark_session_authenticated","session_id":42}`，确认响应 `ok=true`。
+4. 再写入 `{"type":"has_authenticated_session","session_id":42}`，确认响应 payload 中 `authenticated=true` 且 `ttl_remaining_seconds` 不为空。
+5. 停止 `remote_auth.exe`，确认进程退出后不会残留测试 helper。
+
+验证 helper 未启动时的失败路径不会拖慢登录链路：
 
 1. 在 VM 快照中安装 `credential_provider.dll` 和 `remote_auth.exe`，但不要启动 helper 管道服务。
 2. 通过 RDP + NLA + mock MFA 完成一次登录。
@@ -59,7 +68,7 @@ Windows session notification 接入后，在 VM 中验证：
 
 命名管道服务端完成后，再补充成功路径：
 
-1. 启动 `remote_auth` 常驻 helper，确认它监听 `\\.\pipe\rdp_auth_helper`。
+1. 启动 `remote_auth` 常驻 helper，确认它输出 `remote_auth helper 已启动` 并监听 `\\.\pipe\rdp_auth_helper`。
 2. 重复 RDP + NLA + mock MFA 登录。
 3. 确认 CP 日志出现 `HelperIpc mark_session_authenticated_ok`。
 4. 查询 helper 内存态 session，确认同一 session id 的 `has_authenticated_session` 为 true，TTL 剩余时间不为空。

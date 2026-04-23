@@ -501,6 +501,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tracing",
+ "windows",
 ]
 
 [[package]]

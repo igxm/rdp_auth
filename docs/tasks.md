@@ -182,8 +182,8 @@
 
 - [x] 明确 helper 形态：`remote_auth` 是无 UI 的核心后台进程/服务，负责 IPC、session notification、配置解密、API、审计和内存态 session；不得依赖 Tauri、WebView2 或前端资源才能启动。
 - [x] 明确 GUI 边界：后续 Tauri 仅作为独立管理员配置工具，通过 helper 管理 IPC 或 `register_tool` 能力读写配置和查询状态；Credential Provider 永远不直接调用 Tauri GUI。
-- [ ] `remote_auth` 启动命名管道服务。
-- [ ] 将 `remote_auth` 设计为可常驻的 helper 进程，后续可由安装工具注册启动路径；启动失败不能阻塞 LogonUI。
+- [x] `remote_auth` 启动命名管道服务。
+- [x] 将 `remote_auth` 设计为可常驻的 helper 进程，后续可由安装工具注册启动路径；启动失败不能阻塞 LogonUI。
 - [x] helper 内存中维护 `SessionAuthState`，按 Windows session id 记录是否已成功完成 RDP MFA、最后更新时间、最近一次会话事件和诊断状态码，不保存用户名、密码、验证码、token 或 serialization。
 - [ ] helper 使用 Windows session notification 订阅会话事件，至少处理 lock、unlock、disconnect、logoff；事件处理只更新内存状态和脱敏诊断日志。
 - [x] helper 在 logoff、session end、状态过期或显式清理请求时移除对应 session 内存状态，避免 session id 复用导致误判。
@@ -375,6 +375,7 @@
 - [x] 单元测试：helper 收到 logoff/disconnect/session end 事件后清理对应 session 状态。
 - [x] 单元测试：`mark_session_authenticated`、`has_authenticated_session`、`clear_session_state` IPC 请求响应序列化。
 - [x] 单元测试：Credential Provider 侧 `ReportResult` 使用的 `mark_session_authenticated` helper IPC 请求构造稳定，且只包含 session id。
+- [x] 单元测试：helper 命名管道 transport 可以把单条 JSON 请求路由到 session 状态，并拒绝非法请求且不回显敏感字段。
 - [x] 单元测试：手机号校验规则，合法手机号满足 `^1[3-9]\d{9}$`，非法手机号被拒绝。
 - [x] 单元测试：手机号脱敏规则，`13812348888` 显示为 `138****8888`，非法手机号显示为安全占位文案。
 - [x] 单元测试：helper 文件读取手机号模式会让 CP 禁用手机号输入框，并且 UI 只显示脱敏手机号。
