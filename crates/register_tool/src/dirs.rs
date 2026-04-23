@@ -48,15 +48,12 @@ impl fmt::Display for LogDirectoryStatus {
 
 /// 应用机器级运行目录。
 pub fn program_data_dir() -> PathBuf {
-    std::env::var_os("ProgramData")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
-        .join("rdp_auth")
+    auth_logging::program_data_dir()
 }
 
 /// 日志目录。
 pub fn logs_dir() -> PathBuf {
-    program_data_dir().join("logs")
+    auth_logging::logs_dir()
 }
 
 /// 远程配置和统一加密配置目录。
@@ -123,9 +120,7 @@ fn latest_log_file(path: &Path) -> Option<LogFileStatus> {
             }
             let file_name = entry.file_name();
             let file_name = file_name.to_string_lossy();
-            if !file_name.contains("remote_auth.log")
-                && !file_name.contains("credential_provider.log")
-            {
+            if !auth_logging::is_known_diagnostic_log_file(&file_name) {
                 return None;
             }
             let modified_unix_seconds = metadata

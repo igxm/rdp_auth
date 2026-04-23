@@ -133,6 +133,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "auth_logging"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -219,6 +229,7 @@ dependencies = [
  "auth_config",
  "auth_core",
  "auth_ipc",
+ "auth_logging",
  "windows",
  "windows-core",
 ]
@@ -470,6 +481,7 @@ name = "register_tool"
 version = "0.1.0"
 dependencies = [
  "auth_config",
+ "auth_logging",
  "clap",
  "credential_provider",
  "windows-core",
@@ -484,12 +496,11 @@ dependencies = [
  "auth_config",
  "auth_core",
  "auth_ipc",
+ "auth_logging",
  "serde",
  "serde_json",
  "thiserror",
  "tracing",
- "tracing-appender",
- "tracing-subscriber",
 ]
 
 [[package]]

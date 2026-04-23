@@ -4,6 +4,7 @@ members = [
     "crates/auth_config",
     "crates/auth_core",
     "crates/auth_ipc",
+    "crates/auth_logging",
     "crates/credential_provider",
     "crates/register_tool",
     "crates/remote_auth",

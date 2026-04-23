@@ -26,6 +26,7 @@
 - `auth_core`：只放纯业务类型和纯函数，例如认证方式、状态机、手机号校验和脱敏。不得依赖 Windows、注册表、文件系统、网络、IPC 或配置文件。
 - `auth_config`：只负责最小注册表引导项、加密配置文件读写、TOML schema、默认值归一化和旧配置迁移。不得发网络请求，不得读取真实手机号文件，不得承担 helper 运行状态。
 - `auth_ipc`：只定义 CP 与 helper 的协议类型、JSON 编解码和非敏感 payload。不得实现命名管道 IO、Windows session notification 或业务 API。
+- `auth_logging`：只定义统一日志目录、文件名、基础诊断记录格式、tracing 文件初始化和脱敏函数。所有程序新增诊断日志时必须先经过这一层，不得各自复制日志目录、文件名或脱敏规则。
 - `credential_provider`：只处理 Windows Credential Provider COM 生命周期、LogonUI UI、RDP inbound serialization、短超时 helper IPC 客户端和放行凭证打包。不得发网络请求，不得读取复杂业务文件，不得长期保存敏感状态。
 - `remote_auth`：只实现本地 helper 的后台能力，包括命名管道服务、请求路由、session 内存状态、配置聚合、API 调用、审计日志和 Windows session notification。不得承载 Tauri/WebView GUI。
 - `auth_api`：只封装真实服务端 API、请求/响应结构、超时和错误映射。不得读取 CP 状态或注册表。
@@ -77,12 +78,13 @@
 允许的主要依赖方向：
 
 ```text
-credential_provider -> auth_core / auth_config / auth_ipc
-remote_auth         -> auth_core / auth_config / auth_ipc / auth_api
-register_tool      -> auth_config
+credential_provider -> auth_core / auth_config / auth_ipc / auth_logging
+remote_auth         -> auth_core / auth_config / auth_ipc / auth_api / auth_logging
+register_tool      -> auth_config / auth_logging
 auth_config        -> auth_core
 auth_ipc           -> auth_core
 auth_api           -> auth_core
+auth_logging       -> 标准库 + tracing 生态（按 feature 启用）
 auth_core          -> 标准库 + serde
 ```
 

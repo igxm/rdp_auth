@@ -14,6 +14,9 @@ mod registry;
 use std::io::Write;
 
 use auth_config::{export_app_config_toml_to_path, import_app_config_toml_from_path};
+use auth_logging::{
+    COMPONENT_REGISTER_TOOL, DiagnosticRecord, REGISTER_TOOL_LOG_FILE, append_diagnostic_record,
+};
 use cli::{Command, help_text, parse_args};
 use registry::{
     ProviderRegistration, disable_provider, enable_provider, health_check, query_app_config,
@@ -22,6 +25,7 @@ use registry::{
 
 fn main() {
     if let Err(error) = run() {
+        log_tool_event("error", &error);
         // 有些测试环境会单独吞掉 stderr 或 stdout。错误同时写两边并立即 flush，
         // 这样管理员在 RDP/VM 控制台里更容易看到真实失败原因。
         print_line(&format!("错误: {error}"));
@@ -31,7 +35,9 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
-    match parse_args(std::env::args_os().skip(1))? {
+    let command = parse_args(std::env::args_os().skip(1))?;
+    let command_name = command_label(&command);
+    match command {
         Command::Install {
             dll_path,
             helper_path,
@@ -90,7 +96,22 @@ fn run() -> Result<(), String> {
         }
     }
 
+    log_tool_event(command_name, "success");
     Ok(())
+}
+
+fn command_label(command: &Command) -> &'static str {
+    match command {
+        Command::Install { .. } => "install",
+        Command::Uninstall => "uninstall",
+        Command::Status => "status",
+        Command::Health => "health",
+        Command::Disable => "disable",
+        Command::Enable => "enable",
+        Command::ConfigExport { .. } => "config_export",
+        Command::ConfigImport { .. } => "config_import",
+        Command::Help => "help",
+    }
 }
 
 fn print_help() {
@@ -105,4 +126,17 @@ fn print_line(message: &str) {
 fn eprint_line(message: &str) {
     eprintln!("{message}");
     let _ = std::io::stderr().flush();
+}
+
+fn log_tool_event(stage: &str, message: &str) {
+    let _ = append_diagnostic_record(
+        REGISTER_TOOL_LOG_FILE,
+        DiagnosticRecord {
+            component: COMPONENT_REGISTER_TOOL,
+            stage,
+            message,
+            pid: Some(std::process::id()),
+            session: None,
+        },
+    );
 }
