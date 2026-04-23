@@ -21,7 +21,8 @@ pub use file_config::{
 pub use legacy::{LocalConfig, load_local_config};
 pub use login_policy::{
     LoginPolicy, POLICY_REGISTRY_PATH, VALUE_CONFIG_PATH, VALUE_DISABLE_MFA,
-    VALUE_ENABLE_CONSOLE_MFA, VALUE_ENABLE_RDP_MFA, ensure_default_login_policy, load_login_policy,
+    VALUE_ENABLE_CONSOLE_MFA, VALUE_ENABLE_RDP_MFA, VALUE_HELPER_PATH, ensure_default_login_policy,
+    ensure_helper_path, load_helper_path, load_login_policy,
 };
 pub use machine_code::{
     VALUE_MACHINE_CODE, derive_aes_key_from_machine_code, ensure_machine_code, load_machine_code,

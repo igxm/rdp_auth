@@ -10,13 +10,16 @@ use std::path::PathBuf;
 
 use clap::{Args, CommandFactory, Parser, Subcommand, error::ErrorKind};
 
-use crate::paths::normalize_dll_path;
+use crate::paths::{normalize_dll_path, normalize_helper_path};
 
 /// 注册工具支持的命令。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     /// 安装 Credential Provider 注册表项。
-    Install { dll_path: PathBuf },
+    Install {
+        dll_path: PathBuf,
+        helper_path: Option<PathBuf>,
+    },
     /// 卸载 Credential Provider 注册表项。
     Uninstall,
     /// 查询当前注册状态。
@@ -70,6 +73,9 @@ struct InstallArgs {
     /// credential_provider.dll 的绝对路径。
     #[arg(long = "dll", value_name = "credential_provider.dll")]
     dll_path: PathBuf,
+    /// remote_auth.exe 的绝对路径；缺省时使用 DLL 同目录的 remote_auth.exe。
+    #[arg(long = "helper", value_name = "remote_auth.exe")]
+    helper_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -122,6 +128,7 @@ impl Cli {
         match command {
             TopCommand::Install(args) => Ok(Command::Install {
                 dll_path: normalize_dll_path(args.dll_path)?,
+                helper_path: args.helper_path.map(normalize_helper_path).transpose()?,
             }),
             TopCommand::Uninstall => Ok(Command::Uninstall),
             TopCommand::Status => Ok(Command::Status),
@@ -169,6 +176,20 @@ mod tests {
     fn rejects_install_without_dll() {
         let error = parse_args([OsString::from("install")]).unwrap_err();
         assert!(error.contains("--dll"));
+    }
+
+    #[test]
+    fn rejects_install_with_missing_helper() {
+        let error = parse_args([
+            OsString::from("install"),
+            OsString::from("--dll"),
+            OsString::from("missing.dll"),
+            OsString::from("--helper"),
+            OsString::from("missing.exe"),
+        ])
+        .unwrap_err();
+
+        assert!(error.contains("DLL 路径无效"));
     }
 
     #[test]

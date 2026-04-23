@@ -221,8 +221,8 @@
 - [x] 配置加密方式改为 AES-256-GCM，文件内容保存 `nonce + ciphertext`，不再使用 envelope。
 - [x] 首次安装时根据机器信息生成唯一机器码，写入注册表 `MachineCode`，并使用该机器码派生 AES-256 key。
 - [ ] Windows Server 2008 R2 兼容验证暂不纳入当前任务目标；如未来恢复兼容目标，再覆盖机器码生成、注册表写入、AES 加密/解密和重启后读取。
-- [ ] 注册表只保留 Windows 集成所必需的机器级信息：Provider/Filter COM 注册、LogonUI 枚举入口、DLL 路径、helper 路径、配置文件路径、`MachineCode`、`DisableMfa` 应急开关和必要的 `EnableRdpMfa` / `EnableConsoleMfa` 登录入口策略；认证方式、API、手机号、超时、审计、远程配置等业务配置不得散落写入注册表。
-- [ ] `auth_config` 读取注册表 `SOFTWARE\rdp_auth\config` 中的最小引导项，例如 `ConfigPath`、`HelperPath`、`DisableMfa`、`EnableRdpMfa`、`EnableConsoleMfa`，再读取统一配置文件。
+- [x] 注册表只保留 Windows 集成所必需的机器级信息：Provider/Filter COM 注册、LogonUI 枚举入口、DLL 路径、helper 路径、配置文件路径、`MachineCode`、`DisableMfa` 应急开关和必要的 `EnableRdpMfa` / `EnableConsoleMfa` 登录入口策略；认证方式、API、手机号、超时、审计、远程配置等业务配置不得散落写入注册表。
+- [x] `auth_config` 读取注册表 `SOFTWARE\rdp_auth\config` 中的最小引导项，例如 `ConfigPath`、`HelperPath`、`DisableMfa`、`EnableRdpMfa`、`EnableConsoleMfa`，再读取统一配置文件。
 - [x] `auth_config` 按职责拆分模块：`login_policy` 只处理注册表最小引导项，`file_config` 只处理配置路径/文件读写/TOML 解析，`schema` 只处理配置结构和默认值归一化，`legacy` 只保留旧配置迁移占位。
 - [x] `auth_config::lib` 仅作为对外 API re-export 层，避免注册表读取、配置 schema、文件 IO、旧版迁移和后续 AES 加密继续堆在单个文件。
 - [x] `register_tool install` 初始化统一配置文件，若文件已存在则不覆盖人工修改；注册表只写最小引导项和 Windows 必需注册项。
@@ -328,8 +328,8 @@
 
 - [x] `register_tool install` 写入 Credential Provider 注册表项。
 - [x] `register_tool uninstall` 删除注册表项。
-- [ ] 注册 helper 路径。
-- [ ] `register_tool install` 注册或记录 helper 启动路径，并确保 helper 可访问统一配置文件和日志目录。
+- [x] 注册 helper 路径。
+- [x] `register_tool install` 注册或记录 helper 启动路径，并确保 helper 可访问统一配置文件和日志目录。
 - [ ] `register_tool install` 只把核心 helper 注册为后台进程/服务；Tauri GUI 如需安装，作为独立可选组件登记，不影响 CP/helper 注册成功。
 - [ ] `register_tool health` 检查 helper 是否可启动/可连通、命名管道是否可用、session notification 是否初始化成功。
 - [ ] `register_tool health` 显示 Tauri 管理 GUI 是否安装、安装路径和 WebView2/runtime 检查结果；GUI 未安装不得视为登录链路故障。

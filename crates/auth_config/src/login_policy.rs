@@ -4,6 +4,7 @@
 //! 应急禁用开关和统一配置文件路径。业务配置不得继续散落到注册表中。
 
 use std::fmt;
+use std::path::{Path, PathBuf};
 
 use winreg::RegKey;
 use winreg::enums::HKEY_LOCAL_MACHINE;
@@ -36,6 +37,11 @@ pub const VALUE_DISABLE_MFA: &str = "DisableMfa";
 /// 删除后回退到 `C:\ProgramData\rdp_auth\config\rdp_auth.toml.enc`。路径错误会导致
 /// 运行期使用安全默认配置，但不会读取长期明文 TOML。
 pub const VALUE_CONFIG_PATH: &str = "ConfigPath";
+/// 核心 helper 启动路径。
+///
+/// 该值只记录无 UI 后台 helper 的固定 EXE 路径，Credential Provider 后续只能按短超时
+/// IPC 调用 helper，不能把 Tauri GUI 或用户目录中的临时程序写到这里。
+pub const VALUE_HELPER_PATH: &str = "HelperPath";
 
 /// 登录场景策略。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,6 +148,27 @@ pub fn ensure_default_login_policy() -> Result<LoginPolicy> {
     ensure_machine_code()?;
 
     Ok(load_login_policy())
+}
+
+/// 读取注册表中记录的 helper 路径。空字符串视为未配置。
+pub fn load_helper_path() -> Option<PathBuf> {
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let key = hklm.open_subkey(POLICY_REGISTRY_PATH).ok()?;
+    key.get_value::<String, _>(VALUE_HELPER_PATH)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+/// 安装时记录 helper 启动路径。已有值不覆盖，避免管理员指向服务化安装位置后被重装污染。
+pub fn ensure_helper_path(helper_path: &Path) -> Result<PathBuf> {
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let (key, _) = hklm
+        .create_subkey(POLICY_REGISTRY_PATH)
+        .map_err(|error| Error::registry("创建 helper 路径注册表项失败", error))?;
+    write_string_value_if_missing(&key, VALUE_HELPER_PATH, &helper_path.display().to_string())?;
+    Ok(load_helper_path().unwrap_or_else(|| helper_path.to_path_buf()))
 }
 
 fn login_policy_from_registry_values(

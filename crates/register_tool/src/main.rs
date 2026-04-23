@@ -31,13 +31,17 @@ fn main() {
 
 fn run() -> Result<(), String> {
     match parse_args(std::env::args_os().skip(1))? {
-        Command::Install { dll_path } => {
-            let registration = ProviderRegistration::new(dll_path)?;
+        Command::Install {
+            dll_path,
+            helper_path,
+        } => {
+            let registration = ProviderRegistration::new(dll_path, helper_path)?;
             register_provider(&registration)?;
             print_line("已注册 RDP 二次认证 Credential Provider");
             print_line(&format!("Provider CLSID: {}", registration.clsid));
             print_line(&format!("Filter CLSID: {}", registration.filter_clsid));
             print_line(&format!("DLL: {}", registration.dll_path.display()));
+            print_line(&format!("Helper: {}", registration.helper_path.display()));
             print_line(&format!("登录策略:\n{}", query_login_policy()));
             print_line(&format!("业务配置:\n{}", query_app_config()));
         }

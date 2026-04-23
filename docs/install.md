@@ -8,6 +8,7 @@
 
 ```powershell
 cargo build --release -p credential_provider
+cargo build --release -p remote_auth
 cargo build --release -p register_tool
 ```
 
@@ -35,6 +36,12 @@ cargo build --release -p register_tool
 
 不要在 `target\release` 目录下继续写 `.\target\release\credential_provider.dll`，否则会变成不存在的嵌套路径。
 
+`install` 会默认把 helper 路径记录为 DLL 同目录下的 `remote_auth.exe`。如果 helper 安装在其它固定位置，可以显式传入：
+
+```powershell
+.\target\release\register_tool.exe install --dll .\target\release\credential_provider.dll --helper .\target\release\remote_auth.exe
+```
+
 安装会写入以下机器级注册表位置：
 
 - `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{CLSID}`
@@ -44,6 +51,7 @@ cargo build --release -p register_tool
 - `HKLM\SOFTWARE\rdp_auth\config`
 
 这里必须写 `HKLM\SOFTWARE\Classes`，不能写用户级注册表，因为 LogonUI/RDP 登录阶段需要机器级 COM 注册。
+`HKLM\SOFTWARE\rdp_auth\config\HelperPath` 只记录无 UI 核心 helper 路径，不记录 Tauri GUI、API token、手机号或其它业务配置。
 
 ## 3. 默认策略
 

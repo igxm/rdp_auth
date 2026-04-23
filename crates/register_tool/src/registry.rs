@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use auth_config::{
     ConfigSnapshot, LoginPolicy, ensure_default_app_config_file, ensure_default_login_policy,
-    load_app_config_snapshot, load_login_policy,
+    ensure_helper_path, load_app_config_snapshot, load_helper_path, load_login_policy,
 };
 use winreg::RegKey;
 use winreg::enums::HKEY_LOCAL_MACHINE;
@@ -48,14 +48,18 @@ pub struct ProviderRegistration {
     pub filter_clsid: String,
     /// 将写入 `InprocServer32` 默认值的 DLL 绝对路径。
     pub dll_path: PathBuf,
+    /// 将写入最小引导注册表的无 UI helper 路径。
+    pub helper_path: PathBuf,
 }
 
 impl ProviderRegistration {
-    pub fn new(dll_path: PathBuf) -> Result<Self, String> {
+    pub fn new(dll_path: PathBuf, helper_path: Option<PathBuf>) -> Result<Self, String> {
+        let helper_path = helper_path.unwrap_or_else(|| default_helper_path_for_dll(&dll_path));
         Ok(Self {
             clsid: provider_clsid_string(),
             filter_clsid: filter_clsid_string(),
             dll_path,
+            helper_path,
         })
     }
 
@@ -95,6 +99,8 @@ pub struct HealthReport {
     pub enum_registered: bool,
     pub filter_registered: bool,
     pub dll_exists: bool,
+    pub helper_path: Option<PathBuf>,
+    pub helper_exists: bool,
     pub login_policy: LoginPolicy,
     pub app_config: ConfigSnapshot,
     pub runtime_dirs: String,
@@ -127,6 +133,21 @@ impl fmt::Display for HealthReport {
             "DLL 文件: {}",
             if self.dll_exists { "存在" } else { "缺失" }
         )?;
+        if let Some(helper_path) = &self.helper_path {
+            writeln!(formatter, "helper 路径: {}", helper_path.display())?;
+            writeln!(
+                formatter,
+                "helper 文件: {}",
+                if self.helper_exists {
+                    "存在"
+                } else {
+                    "缺失"
+                }
+            )?;
+        } else {
+            writeln!(formatter, "helper 路径: 未配置")?;
+            writeln!(formatter, "helper 文件: 缺失")?;
+        }
         writeln!(formatter, "登录策略:\n{}", self.login_policy)?;
         writeln!(formatter, "业务配置:\n{}", self.app_config)?;
         writeln!(formatter, "{}", self.runtime_dirs)?;
@@ -166,6 +187,7 @@ pub fn register_provider(registration: &ProviderRegistration) -> Result<(), Stri
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     ensure_runtime_dirs()?;
     ensure_default_login_policy().map_err(|error| error.to_string())?;
+    ensure_helper_path(&registration.helper_path).map_err(|error| error.to_string())?;
     ensure_default_app_config_file().map_err(|error| error.to_string())?;
 
     // LogonUI 通过 Credential Providers 枚举入口发现本项目 Provider。默认值只作为
@@ -236,7 +258,7 @@ pub fn register_provider(registration: &ProviderRegistration) -> Result<(), Stri
 
 /// 删除本 Provider 的注册表项。
 pub fn unregister_provider() -> Result<(), String> {
-    let registration = ProviderRegistration::new(PathBuf::new())?;
+    let registration = ProviderRegistration::new(PathBuf::new(), None)?;
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
 
     delete_subkey_tree_if_exists(&hklm, &registration.credential_provider_key())?;
@@ -251,7 +273,7 @@ pub fn unregister_provider() -> Result<(), String> {
 /// 这里只删除 Credential Providers 枚举项，保留 COM CLSID 和 InprocServer32，方便后续
 /// `health` 排查 DLL 路径，也能用 `enable` 快速恢复。真正完全清理用 `uninstall`。
 pub fn disable_provider() -> Result<(), String> {
-    let registration = ProviderRegistration::new(PathBuf::new())?;
+    let registration = ProviderRegistration::new(PathBuf::new(), None)?;
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     delete_subkey_tree_if_exists(&hklm, &registration.credential_provider_key())?;
     delete_subkey_tree_if_exists(&hklm, &registration.credential_provider_filter_key())
@@ -259,7 +281,7 @@ pub fn disable_provider() -> Result<(), String> {
 
 /// 重新启用 LogonUI 枚举入口。
 pub fn enable_provider() -> Result<(), String> {
-    let registration = ProviderRegistration::new(PathBuf::new())?;
+    let registration = ProviderRegistration::new(PathBuf::new(), None)?;
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
 
     if hklm
@@ -286,7 +308,7 @@ pub fn enable_provider() -> Result<(), String> {
 
 /// 查询当前 Provider 是否已注册。
 pub fn query_status() -> Result<RegistrationStatus, String> {
-    let registration = ProviderRegistration::new(PathBuf::new())?;
+    let registration = ProviderRegistration::new(PathBuf::new(), None)?;
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     let Ok(inproc_key) = hklm.open_subkey(registration.provider_inproc_server_key()) else {
         return Ok(RegistrationStatus::NotInstalled);
@@ -314,7 +336,7 @@ pub fn query_app_config() -> ConfigSnapshot {
 
 /// 执行只读健康检查。
 pub fn health_check() -> Result<HealthReport, String> {
-    let registration = ProviderRegistration::new(PathBuf::new())?;
+    let registration = ProviderRegistration::new(PathBuf::new(), None)?;
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     let enum_registered = hklm
         .open_subkey(registration.credential_provider_key())
@@ -327,17 +349,60 @@ pub fn health_check() -> Result<HealthReport, String> {
         RegistrationStatus::Installed { dll_path, .. } => PathBuf::from(dll_path).is_file(),
         RegistrationStatus::NotInstalled => false,
     };
+    let helper_path = load_helper_path();
+    let helper_exists = helper_path
+        .as_ref()
+        .is_some_and(|helper_path| helper_path.is_file());
 
     Ok(HealthReport {
         status,
         enum_registered,
         filter_registered,
         dll_exists,
+        helper_path,
+        helper_exists,
         login_policy: query_login_policy(),
         app_config: load_app_config_snapshot(),
         runtime_dirs: runtime_dirs_status(),
         log_status: log_directory_status(),
     })
+}
+
+fn default_helper_path_for_dll(dll_path: &std::path::Path) -> PathBuf {
+    dll_path
+        .parent()
+        .map(|parent| parent.join("remote_auth.exe"))
+        .unwrap_or_else(|| PathBuf::from("remote_auth.exe"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ProviderRegistration, default_helper_path_for_dll};
+    use std::path::PathBuf;
+
+    #[test]
+    fn derives_default_helper_path_next_to_provider_dll() {
+        let dll_path = PathBuf::from(r"C:\Program Files\rdp_auth\credential_provider.dll");
+
+        assert_eq!(
+            default_helper_path_for_dll(&dll_path),
+            PathBuf::from(r"C:\Program Files\rdp_auth\remote_auth.exe")
+        );
+    }
+
+    #[test]
+    fn explicit_helper_path_overrides_default_location() {
+        let registration = ProviderRegistration::new(
+            PathBuf::from(r"C:\Program Files\rdp_auth\credential_provider.dll"),
+            Some(PathBuf::from(r"D:\rdp_auth\remote_auth.exe")),
+        )
+        .unwrap();
+
+        assert_eq!(
+            registration.helper_path,
+            PathBuf::from(r"D:\rdp_auth\remote_auth.exe")
+        );
+    }
 }
 
 fn delete_subkey_tree_if_exists(root: &RegKey, path: &str) -> Result<(), String> {
