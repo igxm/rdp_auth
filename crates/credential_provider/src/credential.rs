@@ -66,6 +66,27 @@ impl RdpMfaCredential {
 }
 
 impl RdpMfaCredential_Impl {
+    fn reset_phone_field_string(&self, phone: &str) -> Result<()> {
+        let events = self
+            .events
+            .lock()
+            .expect("credential events poisoned")
+            .clone();
+        let Some(events) = events else {
+            return Ok(());
+        };
+
+        let credential = self.to_interface::<ICredentialProviderCredential>();
+        let phone = wide_null(phone);
+        unsafe {
+            // SAFETY: LogonUI 可能仍会把 READONLY 的 EDIT_TEXT 当作可输入控件处理。
+            // 配置手机号模式下 CP 只允许展示 helper 返回的脱敏值，收到写入回调后必须
+            // 立即把 UI 字段刷回原值，避免用户误以为修改后的号码会被用于发送短信。
+            events.SetFieldString(&credential, MfaField::Phone as u32, PCWSTR(phone.as_ptr()))?;
+        }
+        Ok(())
+    }
+
     fn refresh_visible_fields(&self) -> Result<()> {
         let events = self
             .events
@@ -313,15 +334,17 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
         let mut state = self.state.lock().expect("credential state poisoned");
         match field {
             MfaField::Phone => {
-                if !state.phone_editable {
-                    log_event("SetStringValue", "field=Phone ignored_readonly_policy");
-                    return Ok(());
+                let update = apply_phone_field_input(&mut state, value);
+                drop(state);
+                match update {
+                    PhoneFieldUpdate::Accepted { chars } => {
+                        log_event("SetStringValue", format!("field=Phone chars={chars}"));
+                    }
+                    PhoneFieldUpdate::RestoreDisplay { phone } => {
+                        log_event("SetStringValue", "field=Phone restore_readonly_value");
+                        self.reset_phone_field_string(&phone)?;
+                    }
                 }
-                log_event(
-                    "SetStringValue",
-                    format!("field=Phone chars={}", value.chars().count()),
-                );
-                state.phone = value;
             }
             MfaField::SmsCode => {
                 log_event(
@@ -661,6 +684,23 @@ fn auth_method_label(method: AuthMethod) -> &'static str {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum PhoneFieldUpdate {
+    Accepted { chars: usize },
+    RestoreDisplay { phone: String },
+}
+
+fn apply_phone_field_input(state: &mut CredentialProviderState, value: String) -> PhoneFieldUpdate {
+    if !state.phone_editable {
+        return PhoneFieldUpdate::RestoreDisplay {
+            phone: state.phone.clone(),
+        };
+    }
+    let chars = value.chars().count();
+    state.phone = value;
+    PhoneFieldUpdate::Accepted { chars }
+}
+
 fn status_text(state: &CredentialProviderState) -> &str {
     match &state.mfa_state {
         MfaState::Failed(message) => message.as_str(),
@@ -763,7 +803,8 @@ fn wide_null(value: &str) -> Vec<u16> {
 mod tests {
     use super::{MOCK_SECOND_PASSWORD, MOCK_SMS_CODE, prepare_send_sms_state, verify_mock_mfa};
     use super::{
-        auth_method_index, auth_method_selected_index, field_visibility, send_sms_label_owned,
+        PhoneFieldUpdate, apply_phone_field_input, auth_method_index, auth_method_selected_index,
+        field_visibility, send_sms_label_owned,
     };
     use crate::fields::MfaField;
     use crate::state::CredentialProviderState;
@@ -819,6 +860,34 @@ mod tests {
             field_visibility(MfaField::SmsCode, &state).0,
             CPFS_DISPLAY_IN_SELECTED_TILE
         );
+    }
+
+    #[test]
+    fn configured_phone_input_is_restored_without_changing_state() {
+        let mut state = CredentialProviderState::default();
+        state.phone = "138****8888".to_owned();
+        state.phone_editable = false;
+
+        let update = apply_phone_field_input(&mut state, "139****9999".to_owned());
+
+        assert_eq!(state.phone, "138****8888");
+        assert_eq!(
+            update,
+            PhoneFieldUpdate::RestoreDisplay {
+                phone: "138****8888".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn manual_phone_input_updates_state() {
+        let mut state = CredentialProviderState::default();
+        state.phone_editable = true;
+
+        let update = apply_phone_field_input(&mut state, "13800138000".to_owned());
+
+        assert_eq!(state.phone, "13800138000");
+        assert_eq!(update, PhoneFieldUpdate::Accepted { chars: 11 });
     }
 
     #[test]
