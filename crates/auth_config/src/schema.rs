@@ -560,7 +560,7 @@ fn default_missing_serialization_grace_seconds() -> u64 {
 }
 
 fn default_sms_resend_seconds() -> u32 {
-    60
+    300
 }
 
 fn default_disconnect_when_missing_serialization() -> bool {
@@ -626,7 +626,7 @@ timeout_seconds = 180
 
         assert_eq!(config.mfa.timeout_seconds, 180);
         assert_eq!(config.mfa.missing_serialization_grace_seconds, 1);
-        assert_eq!(config.mfa.sms_resend_seconds, 60);
+        assert_eq!(config.mfa.sms_resend_seconds, 300);
         assert_eq!(
             config.auth_methods.enabled_methods(),
             vec![AuthMethod::PhoneCode, AuthMethod::SecondPassword]

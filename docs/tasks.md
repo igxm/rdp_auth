@@ -164,8 +164,8 @@
 - [ ] 手动输入手机号模式：手机号字段允许编辑，点击发送验证码前必须通过手机号正则校验，默认规则为 `^1[3-9]\d{9}$`。
 - [ ] 手机号不合法时不允许进入发送短信流程，刷新状态提示为“请输入正确的手机号”或“手机号配置无效，请联系管理员”。
 - [x] 删除底部重复状态区域，避免登录按钮下方再出现一块“第二部分”内容。
-- [x] 发送验证码后立即把按钮切换为禁用态，并显示 `重新发送(60)`。
-- [x] 实现短信验证码重新发送倒计时递减，并在 60 秒后恢复为可点击 `发送验证码`。（当前通过 LogonUI events 只刷新发送短信按钮；后续接入 helper 后可改为 helper 心跳驱动）
+- [x] 发送验证码后立即把按钮切换为禁用态，并显示 `重新发送(300)`。
+- [x] 实现短信验证码重新发送倒计时递减，并在 300 秒后恢复为可点击 `发送验证码`。（当前通过 LogonUI events 只刷新发送短信按钮；后续接入 helper 后可改为 helper 心跳驱动）
 - [x] 增加认证超时断开机制：收到 RDP inbound serialization 后启动默认 2 分钟的一次性定时器，超时仍未完成二次认证时自动断开当前 RDP 会话。
 - [x] 认证超时断开时间后续改为从统一配置文件读取，缺失时默认 120 秒。
 - [x] 设计 `MfaState` 状态机：空闲、发送短信中、等待输入、认证中、成功、失败。
@@ -204,7 +204,7 @@
 - [ ] helper 采集 RDP 连接用户 IP：优先按当前 Windows session 查询客户端地址；采集失败时填充 `unknown`，并记录脱敏诊断原因。
 - [ ] helper 采集本机内网 IP 列表：枚举活动网卡，过滤 loopback、link-local、未启用网卡和明显无效地址，支持多网卡多 IP。
 - [ ] helper 获取本机公网 IP：优先调用自家服务端公网 IP 查询接口；失败时填充 `unknown`，默认不阻断短信发送，除非远程策略要求 fail closed。
-- [x] helper 返回短信发送成功后，驱动 CP 进入 60 秒重新发送倒计时。（helper 已返回成功响应；CP 通过命名管道接入后使用该响应启动倒计时）
+- [x] helper 返回短信发送成功后，驱动 CP 进入 300 秒重新发送倒计时。（helper 已返回成功响应；CP 通过命名管道接入后使用该响应启动倒计时）
 - [x] 支持 `verify_sms` 请求。
 - [x] 支持 `verify_second_password` 请求。
 - [x] 支持 `post_login_log` 请求。
@@ -234,7 +234,7 @@
 - [x] 定义认证方式开关配置，例如 `auth_methods.phone_code`、`auth_methods.second_password`、`auth_methods.wechat`，默认启用手机验证码和二次密码，微信在真实接入前默认关闭。
 - [x] 定义认证超时配置，例如 `mfa.timeout_seconds`，默认 120 秒，设置过小/非法时恢复默认值。
 - [x] 定义缺失 RDP 原始凭证保护配置，例如 `mfa.missing_serialization_grace_seconds`，默认先按 VM 结果确定为 1 到 5 秒之间，设置过小/非法时恢复安全默认值。
-- [x] 定义短信重新发送配置，例如 `mfa.sms_resend_seconds`，默认 60 秒；helper/API 接入后优先使用服务端返回的限流时间。
+- [x] 定义短信重新发送配置，例如 `mfa.sms_resend_seconds`，默认 300 秒；helper/API 接入后优先使用服务端返回的限流时间。
 - [x] 定义 RDP 断开策略配置，例如 `mfa.disconnect_when_missing_serialization = true`，应急关闭时必须记录脱敏诊断日志并保持 fail closed，不得绕过 MFA。
 - [x] 定义 helper session 状态配置，例如 `mfa.session_state_ttl_seconds`、`mfa.authenticated_session_short_grace_seconds`、`mfa.initial_login_grace_seconds`，用于区分已认证会话返回 LogonUI 和首次登录等待 serialization。
 - [x] 定义 helper IPC 超时配置，例如 `mfa.helper_ipc_timeout_ms`，默认应足够短，避免 LogonUI 被 helper 卡住。

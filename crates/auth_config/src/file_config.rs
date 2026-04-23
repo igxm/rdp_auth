@@ -319,7 +319,7 @@ timeout_seconds = 180
 
         assert!(normalized.contains("schema_version = 1"));
         assert!(normalized.contains("timeout_seconds = 180"));
-        assert!(normalized.contains("sms_resend_seconds = 60"));
+        assert!(normalized.contains("sms_resend_seconds = 300"));
     }
 
     #[test]

@@ -64,7 +64,7 @@ Credential Provider Tile 已经预留以下二次认证字段：
 4. 微信扫码字段：当前只显示预留提示，不接入真实逻辑。
 5. 登录和取消操作。
 
-认证方式切换后，Credential 会通过 `ICredentialProviderCredentialEvents` 主动通知 LogonUI 更新字段显示状态。发送验证码后，按钮会进入 `重新发送(60)` 的禁用态，防止重复点击；真正的逐秒倒计时和 60 秒后恢复点击，需要结合受控 UI 刷新或 helper 心跳接入，避免在 LogonUI 进程内使用不受控后台线程。
+认证方式切换后，Credential 会通过 `ICredentialProviderCredentialEvents` 主动通知 LogonUI 更新字段显示状态。发送验证码后，按钮会进入 `重新发送(300)` 的禁用态，防止重复点击；真正的逐秒倒计时和 300 秒后恢复点击，需要结合受控 UI 刷新或 helper 心跳接入，避免在 LogonUI 进程内使用不受控后台线程。
 
 当前 UI 骨架只保存输入状态和显示状态，真实 helper 调用、短信发送、二次密码校验和 fail closed 放行策略将在后续阶段接入。
 

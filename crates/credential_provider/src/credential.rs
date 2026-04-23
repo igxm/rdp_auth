@@ -11,12 +11,13 @@ use auth_core::{AuthMethod, MfaState};
 use windows::Win32::Foundation::{E_INVALIDARG, E_NOTIMPL, E_POINTER, NTSTATUS};
 use windows::Win32::Graphics::Gdi::HBITMAP;
 use windows::Win32::UI::Shell::{
-    CPFIS_DISABLED, CPFIS_FOCUSED, CPFIS_NONE, CPFS_DISPLAY_IN_BOTH, CPFS_DISPLAY_IN_SELECTED_TILE,
-    CPFS_HIDDEN, CPGSR_NO_CREDENTIAL_NOT_FINISHED, CPGSR_RETURN_CREDENTIAL_FINISHED, CPSI_ERROR,
-    CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION, CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE,
-    CREDENTIAL_PROVIDER_FIELD_STATE, CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE,
-    CREDENTIAL_PROVIDER_STATUS_ICON, ICredentialProviderCredential,
-    ICredentialProviderCredential_Impl, ICredentialProviderCredentialEvents,
+    CPFIS_DISABLED, CPFIS_FOCUSED, CPFIS_NONE, CPFIS_READONLY, CPFS_DISPLAY_IN_BOTH,
+    CPFS_DISPLAY_IN_SELECTED_TILE, CPFS_HIDDEN, CPGSR_NO_CREDENTIAL_NOT_FINISHED,
+    CPGSR_RETURN_CREDENTIAL_FINISHED, CPSI_ERROR, CREDENTIAL_PROVIDER_CREDENTIAL_SERIALIZATION,
+    CREDENTIAL_PROVIDER_FIELD_INTERACTIVE_STATE, CREDENTIAL_PROVIDER_FIELD_STATE,
+    CREDENTIAL_PROVIDER_GET_SERIALIZATION_RESPONSE, CREDENTIAL_PROVIDER_STATUS_ICON,
+    ICredentialProviderCredential, ICredentialProviderCredential_Impl,
+    ICredentialProviderCredentialEvents,
 };
 use windows::core::{BOOL, Error, IUnknownImpl, PCWSTR, PWSTR, Ref, Result, implement};
 
@@ -596,7 +597,10 @@ fn field_visibility(
             if state.selected_method == AuthMethod::PhoneCode =>
         {
             let interactive_state = if field == MfaField::Phone && !state.phone_editable {
-                CPFIS_DISABLED
+                // 配置手机号只展示 helper 返回的脱敏值。使用 READONLY 而不是 DISABLED，
+                // 避免 LogonUI 在深色/图片背景上把禁用输入框渲染成低对比灰字，同时仍由
+                // SetStringValue 拒绝写入，确保 CP 不接收真实手机号。
+                CPFIS_READONLY
             } else if field == MfaField::SendSms && state.sms_resend_remaining > 0 {
                 CPFIS_DISABLED
             } else {
@@ -730,7 +734,9 @@ mod tests {
     use crate::state::CredentialProviderState;
     use auth_core::{AuthMethod, MfaState};
     use auth_ipc::{PhoneInputSource, PolicySnapshot};
-    use windows::Win32::UI::Shell::{CPFIS_DISABLED, CPFS_DISPLAY_IN_SELECTED_TILE, CPFS_HIDDEN};
+    use windows::Win32::UI::Shell::{
+        CPFIS_DISABLED, CPFIS_READONLY, CPFS_DISPLAY_IN_SELECTED_TILE, CPFS_HIDDEN,
+    };
 
     #[test]
     fn auth_method_indices_are_stable_for_combobox() {
@@ -761,7 +767,7 @@ mod tests {
     }
 
     #[test]
-    fn configured_phone_policy_disables_phone_field_and_displays_masked_value() {
+    fn configured_phone_policy_makes_phone_field_readonly_and_displays_masked_value() {
         let mut state = CredentialProviderState::default();
         state.apply_policy_snapshot(&PolicySnapshot {
             auth_methods: vec![AuthMethod::PhoneCode],
@@ -773,7 +779,7 @@ mod tests {
         });
 
         assert_eq!(state.phone, "138****8888");
-        assert_eq!(field_visibility(MfaField::Phone, &state).1, CPFIS_DISABLED);
+        assert_eq!(field_visibility(MfaField::Phone, &state).1, CPFIS_READONLY);
         assert_eq!(
             field_visibility(MfaField::SmsCode, &state).0,
             CPFS_DISPLAY_IN_SELECTED_TILE
@@ -798,9 +804,9 @@ mod tests {
     #[test]
     fn sms_button_is_disabled_during_resend_window() {
         let mut state = CredentialProviderState::default();
-        state.sms_resend_remaining = 60;
+        state.sms_resend_remaining = 300;
 
-        assert_eq!(send_sms_label_owned(&state), "重新发送(60)");
+        assert_eq!(send_sms_label_owned(&state), "重新发送(300)");
         assert_eq!(
             field_visibility(MfaField::SendSms, &state).1,
             CPFIS_DISABLED

@@ -62,7 +62,7 @@ wechat = false
 [mfa]
 timeout_seconds = 120
 missing_serialization_grace_seconds = 1
-sms_resend_seconds = 60
+sms_resend_seconds = 300
 disconnect_when_missing_serialization = true
 helper_ipc_timeout_ms = 300
 session_state_ttl_seconds = 86400
