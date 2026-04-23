@@ -16,14 +16,25 @@ use crate::machine_code::ensure_machine_code;
 ///
 /// 这个路径只保存登录流程策略，不保存服务端 token、验证码、二次密码等敏感内容。
 /// Filter 在 LogonUI 进程内只能做极轻量判断，因此这里必须保持字段少、默认值清晰。
+/// 删除整个键会回退到代码内置安全默认值和默认配置路径；它不会删除加密配置文件。
 pub const POLICY_REGISTRY_PATH: &str = r"SOFTWARE\rdp_auth\config";
 /// 是否启用 RDP/NLA 场景二次认证。
+///
+/// 缺失时默认启用。误删该值不会绕过 RDP MFA，但手工置 0 会让 RDP 暂时不进入二次认证。
 pub const VALUE_ENABLE_RDP_MFA: &str = "EnableRdpMfa";
 /// 是否启用本地控制台登录二次认证。
+///
+/// 缺失时默认关闭，避免测试阶段把本地维护入口锁住。置 1 前必须确认 VM 快照和恢复手段。
 pub const VALUE_ENABLE_CONSOLE_MFA: &str = "EnableConsoleMfa";
 /// 应急禁用开关。置为 1 时 Filter 和后续 Provider 逻辑都应尽量放开，避免锁死机器。
+///
+/// 这是最高优先级恢复开关。删除该值等价于关闭应急禁用；遇到登录异常时应置 1 而不是
+/// 盲目删除系统 Credential Provider 注册项。
 pub const VALUE_DISABLE_MFA: &str = "DisableMfa";
 /// 统一配置文件路径。注册表只保存这个引导路径，不保存业务策略细节。
+///
+/// 删除后回退到 `C:\ProgramData\rdp_auth\config\rdp_auth.toml.enc`。路径错误会导致
+/// 运行期使用安全默认配置，但不会读取长期明文 TOML。
 pub const VALUE_CONFIG_PATH: &str = "ConfigPath";
 
 /// 登录场景策略。

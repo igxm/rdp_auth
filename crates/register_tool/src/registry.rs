@@ -1,7 +1,8 @@
 //! Credential Provider 注册表写入和删除。
 //!
 //! 这里只处理本 Provider 的固定注册表路径。安装工具必须保持克制，不修改系统默认
-//! Credential Provider，也不写 Filter 项；Filter 要等主链路 VM 验证稳定后单独实现。
+//! Credential Provider，也不把业务配置散落写入注册表；Filter 只登记本项目自己的
+//! CLSID，是否隐藏系统入口由最小登录策略决定。
 
 use std::fmt;
 use std::path::PathBuf;
@@ -20,10 +21,22 @@ use crate::guid::{filter_clsid_string, provider_clsid_string};
 
 const PROVIDER_NAME: &str = "RDP Auth MFA Provider";
 const THREADING_MODEL: &str = "Apartment";
+/// LogonUI 枚举 Credential Provider 的机器级入口。
+///
+/// 删除这里会让登录界面不再显示本项目 Provider，但不会删除 COM 注册；`disable`
+/// 正是利用这个边界做应急恢复。误删只影响本项目入口，系统默认 Provider 不应被触碰。
 const CREDENTIAL_PROVIDERS_ROOT: &str =
     r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers";
+/// LogonUI 枚举 Credential Provider Filter 的机器级入口。
+///
+/// 删除这里会停用防绕过 Filter，使 RDP/NLA 可能回到系统默认入口；应急禁用时允许删，
+/// 但普通卸载以外不要删除其它厂商或系统 Filter。
 const CREDENTIAL_PROVIDER_FILTERS_ROOT: &str =
     r"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Provider Filters";
+/// 机器级 COM 注册根路径。
+///
+/// LogonUI 运行在系统登录链路中，看不到 HKCU 用户级 COM 注册。删除本项目 CLSID 会让
+/// Provider/Filter 无法加载；恢复前必须重新 install，不能只执行 enable。
 const MACHINE_CLASSES_ROOT: &str = r"SOFTWARE\Classes";
 
 /// 一次安装所需的注册信息。
@@ -155,7 +168,8 @@ pub fn register_provider(registration: &ProviderRegistration) -> Result<(), Stri
     ensure_default_login_policy().map_err(|error| error.to_string())?;
     ensure_default_app_config_file().map_err(|error| error.to_string())?;
 
-    // LogonUI 通过这个路径枚举 Credential Provider。默认值只作为显示/诊断名称。
+    // LogonUI 通过 Credential Providers 枚举入口发现本项目 Provider。默认值只作为
+    // 显示/诊断名称；这里不写任何业务策略，避免卸载或应急禁用时误删运行期配置。
     let (provider_key, _) = hklm
         .create_subkey(registration.credential_provider_key())
         .map_err(|error| {
@@ -164,6 +178,8 @@ pub fn register_provider(registration: &ProviderRegistration) -> Result<(), Stri
     provider_key
         .set_value("", &PROVIDER_NAME)
         .map_err(|error| format!("写入 Provider 名称失败: {error}"))?;
+    // Filter 枚举入口只让 LogonUI 知道本项目有一个过滤器。实际是否隐藏系统入口必须
+    // 继续由 EnableRdpMfa / EnableConsoleMfa / DisableMfa 判断，避免注册即锁死本地登录。
     let (filter_key, _) = hklm
         .create_subkey(registration.credential_provider_filter_key())
         .map_err(|error| {
@@ -174,7 +190,8 @@ pub fn register_provider(registration: &ProviderRegistration) -> Result<(), Stri
         .map_err(|error| format!("写入 Filter 名称失败: {error}"))?;
 
     // COM 通过机器级 HKLM\SOFTWARE\Classes\CLSID 找到 DLL。这里不写 HKCU，避免
-    // 用户级注册在 LogonUI/RDP 登录场景不可见。
+    // 用户级注册在 LogonUI/RDP 登录场景不可见。删除 CLSID 比删除枚举入口更彻底：
+    // 后续 enable 无法恢复，必须重新 install 写回 InprocServer32。
     let (provider_clsid_key, _) = hklm
         .create_subkey(registration.provider_clsid_key())
         .map_err(|error| format!("写入 Provider COM CLSID 项失败，是否使用管理员运行: {error}"))?;
@@ -185,13 +202,19 @@ pub fn register_provider(registration: &ProviderRegistration) -> Result<(), Stri
     let (provider_inproc_key, _) = hklm
         .create_subkey(registration.provider_inproc_server_key())
         .map_err(|error| format!("写入 Provider InprocServer32 项失败: {error}"))?;
+    // InprocServer32 默认值是 LogonUI 实际加载的 DLL 路径。路径错误会导致本项目加载失败，
+    // 但不应影响系统默认 Provider；health 会用这个值做 DLL 存在性检查。
     provider_inproc_key
         .set_value("", &registration.dll_path.display().to_string())
         .map_err(|error| format!("写入 Provider DLL 路径失败: {error}"))?;
+    // Credential Provider 对象由 COM 在 LogonUI 进程内创建，Apartment 模型更符合
+    // LogonUI/UI 回调的线程假设；误改可能引入难以复现的 COM 生命周期问题。
     provider_inproc_key
         .set_value("ThreadingModel", &THREADING_MODEL)
         .map_err(|error| format!("写入 Provider ThreadingModel 失败: {error}"))?;
 
+    // Filter 与 Provider 共用同一个 DLL，但拥有独立 CLSID。卸载时必须同时删除两组
+    // CLSID，否则可能留下只加载 Filter 或只加载 Provider 的半安装状态。
     let (filter_clsid_key, _) = hklm
         .create_subkey(registration.filter_clsid_key())
         .map_err(|error| format!("写入 Filter COM CLSID 项失败，是否使用管理员运行: {error}"))?;
