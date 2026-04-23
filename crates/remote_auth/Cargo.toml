@@ -9,6 +9,9 @@ anyhow.workspace = true
 auth_config = { path = "../auth_config" }
 auth_core = { path = "../auth_core" }
 auth_ipc = { path = "../auth_ipc" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror.workspace = true
 tracing.workspace = true
 tracing-appender.workspace = true
 tracing-subscriber.workspace = true

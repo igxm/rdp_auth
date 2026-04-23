@@ -8,6 +8,7 @@ mod audit;
 mod diagnostics;
 mod mfa;
 mod policy;
+mod remote_config;
 mod router;
 mod session_state;
 
