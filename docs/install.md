@@ -36,7 +36,7 @@ cargo build --release -p register_tool
 
 不要在 `target\release` 目录下继续写 `.\target\release\credential_provider.dll`，否则会变成不存在的嵌套路径。
 
-`install` 会默认把 helper 路径记录为 DLL 同目录下的 `remote_auth.exe`。如果 helper 安装在其它固定位置，可以显式传入：
+`install` 会默认把 helper 路径记录为 DLL 同目录下的 `remote_auth.exe`，并在写入注册表前校验该文件存在且扩展名为 `.exe`。如果 helper 安装在其它固定位置，可以显式传入：
 
 ```powershell
 .\target\release\register_tool.exe install --dll .\target\release\credential_provider.dll --helper .\target\release\remote_auth.exe

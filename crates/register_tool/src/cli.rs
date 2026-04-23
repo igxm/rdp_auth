@@ -157,6 +157,9 @@ impl ConfigCommand {
 mod tests {
     use super::{Command, help_text, parse_args};
     use std::ffi::OsString;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn parses_help_when_no_args() {
@@ -180,16 +183,23 @@ mod tests {
 
     #[test]
     fn rejects_install_with_missing_helper() {
+        let root = unique_temp_dir("rejects_install_with_missing_helper");
+        fs::create_dir_all(&root).unwrap();
+        let dll_path = root.join("credential_provider.dll");
+        let helper_path = root.join("missing.exe");
+        fs::write(&dll_path, b"stub dll").unwrap();
+
         let error = parse_args([
             OsString::from("install"),
             OsString::from("--dll"),
-            OsString::from("missing.dll"),
+            dll_path.into_os_string(),
             OsString::from("--helper"),
-            OsString::from("missing.exe"),
+            helper_path.into_os_string(),
         ])
         .unwrap_err();
 
-        assert!(error.contains("DLL 路径无效"));
+        assert!(error.contains("helper 路径无效"));
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -222,5 +232,13 @@ mod tests {
                 input_path: "C:\\temp\\rdp_auth.toml".into()
             }
         );
+    }
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("rdp_auth_{name}_{nanos}"))
     }
 }

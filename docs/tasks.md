@@ -437,7 +437,7 @@
 - [ ] 所有 `tracing` 字段必须先经过脱敏策略评审，禁止直接使用 `?struct` 或 `%struct` 记录包含敏感字段的结构体。
 - [ ] 所有 `anyhow::Context` 文案不得拼接敏感值；需要排查时使用脱敏 ID、长度、哈希前缀或内部错误码。
 - [ ] 使用后清理敏感内存，必要处调用 Windows 安全清零 API。
-- [ ] helper 路径固定，并校验文件存在性。
+- [x] helper 路径固定，并校验文件存在性。
 - [ ] CP 与 helper IPC 增加调用方校验或权限控制。
 - [x] helper session 内存状态只保存 session id、状态枚举、时间戳和脱敏诊断码，不保存用户名、手机号、密码、验证码、token 或 serialization。
 - [x] helper session 状态必须随 logoff/disconnect/session end/TTL 过期清理，避免 Windows session id 复用导致错误断开。

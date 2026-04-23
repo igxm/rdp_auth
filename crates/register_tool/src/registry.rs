@@ -18,6 +18,7 @@ use crate::dirs::{
     LogDirectoryStatus, ensure_runtime_dirs, log_directory_status, runtime_dirs_status,
 };
 use crate::guid::{filter_clsid_string, provider_clsid_string};
+use crate::paths::validate_helper_exe_path;
 
 const PROVIDER_NAME: &str = "RDP Auth MFA Provider";
 const THREADING_MODEL: &str = "Apartment";
@@ -187,6 +188,7 @@ pub fn register_provider(registration: &ProviderRegistration) -> Result<(), Stri
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     ensure_runtime_dirs()?;
     ensure_default_login_policy().map_err(|error| error.to_string())?;
+    validate_helper_exe_path(&registration.helper_path)?;
     ensure_helper_path(&registration.helper_path).map_err(|error| error.to_string())?;
     ensure_default_app_config_file().map_err(|error| error.to_string())?;
 
