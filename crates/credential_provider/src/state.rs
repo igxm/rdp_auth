@@ -9,6 +9,7 @@ use std::sync::Mutex;
 
 use auth_config::load_app_config;
 use auth_core::{AuthMethod, MfaState};
+use auth_ipc::PolicySnapshot;
 use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Shell::{CPUS_LOGON, CREDENTIAL_PROVIDER_USAGE_SCENARIO};
@@ -157,6 +158,8 @@ pub struct CredentialProviderState {
     pub available_auth_methods: Vec<AuthMethod>,
     /// 手机号输入值。Credential Provider 进程内只短暂保存 UI 内容，不写日志。
     pub phone: String,
+    /// 手机号字段是否允许用户编辑。文件模式下 helper 只下发脱敏号码，CP 必须禁用编辑。
+    pub phone_editable: bool,
     /// 短信验证码输入值。验证码属于敏感内容，只能保存在内存状态中。
     pub sms_code: String,
     /// 二次密码输入值。后续接入 helper 后必须通过 IPC 传递，不允许写日志。
@@ -199,6 +202,7 @@ impl Default for CredentialProviderState {
             selected_method,
             available_auth_methods,
             phone: String::new(),
+            phone_editable: true,
             sms_code: String::new(),
             second_password: String::new(),
             status_message: "请选择二次认证方式".to_owned(),
@@ -213,9 +217,35 @@ impl Default for CredentialProviderState {
     }
 }
 
+impl CredentialProviderState {
+    /// 应用 helper 下发的脱敏策略快照。
+    ///
+    /// 这里不读取手机号文件，也不接触真实手机号；文件模式只把 helper 返回的脱敏值显示在 UI 中，
+    /// 并禁用手机号输入框，避免 CP 进程保存或修改真实手机号。
+    pub fn apply_policy_snapshot(&mut self, snapshot: &PolicySnapshot) {
+        if !snapshot.auth_methods.is_empty() {
+            self.available_auth_methods = snapshot.auth_methods.clone();
+        }
+        if !self.available_auth_methods.contains(&self.selected_method) {
+            self.selected_method = self
+                .available_auth_methods
+                .first()
+                .copied()
+                .unwrap_or(AuthMethod::PhoneCode);
+        }
+        self.phone_editable = snapshot.phone_editable;
+        if !snapshot.phone_editable {
+            self.phone = snapshot.masked_phone.clone().unwrap_or_default();
+        }
+        self.mfa_timeout_seconds = snapshot.mfa_timeout_seconds;
+        self.sms_resend_seconds = snapshot.sms_resend_seconds;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use auth_core::AuthMethod;
+    use auth_ipc::{PhoneInputSource, PolicySnapshot};
 
     use super::{
         CredentialProviderState, RDP_MFA_PROVIDER_CLSID, remember_remote_source_provider,
@@ -252,10 +282,51 @@ mod tests {
         assert!(state.disconnect_when_missing_serialization);
         assert_eq!(state.timeout_generation, 0);
         assert_eq!(state.sms_resend_generation, 0);
+        assert!(state.phone_editable);
         assert_eq!(
             state.available_auth_methods,
             vec![AuthMethod::PhoneCode, AuthMethod::SecondPassword]
         );
+    }
+
+    #[test]
+    fn file_phone_policy_snapshot_disables_phone_input_and_uses_masked_value() {
+        let mut state = CredentialProviderState::default();
+
+        state.apply_policy_snapshot(&PolicySnapshot {
+            auth_methods: vec![AuthMethod::PhoneCode],
+            phone_source: PhoneInputSource::ConfiguredFile,
+            masked_phone: Some("138****8888".to_owned()),
+            phone_editable: false,
+            mfa_timeout_seconds: 90,
+            sms_resend_seconds: 45,
+        });
+
+        assert_eq!(state.phone, "138****8888");
+        assert!(!state.phone_editable);
+        assert_eq!(state.available_auth_methods, vec![AuthMethod::PhoneCode]);
+        assert_eq!(state.selected_method, AuthMethod::PhoneCode);
+        assert_eq!(state.mfa_timeout_seconds, 90);
+        assert_eq!(state.sms_resend_seconds, 45);
+    }
+
+    #[test]
+    fn manual_phone_policy_snapshot_keeps_existing_input_editable() {
+        let mut state = CredentialProviderState::default();
+        state.phone = "13800138000".to_owned();
+
+        state.apply_policy_snapshot(&PolicySnapshot {
+            auth_methods: vec![AuthMethod::SecondPassword],
+            phone_source: PhoneInputSource::ManualInput,
+            masked_phone: None,
+            phone_editable: true,
+            mfa_timeout_seconds: 120,
+            sms_resend_seconds: 60,
+        });
+
+        assert_eq!(state.phone, "13800138000");
+        assert!(state.phone_editable);
+        assert_eq!(state.selected_method, AuthMethod::SecondPassword);
     }
 
     #[test]

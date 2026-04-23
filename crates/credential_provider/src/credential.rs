@@ -306,6 +306,10 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
         let mut state = self.state.lock().expect("credential state poisoned");
         match field {
             MfaField::Phone => {
+                if !state.phone_editable {
+                    log_event("SetStringValue", "field=Phone ignored_readonly_policy");
+                    return Ok(());
+                }
                 log_event(
                     "SetStringValue",
                     format!("field=Phone chars={}", value.chars().count()),
@@ -579,8 +583,9 @@ fn field_visibility(
         MfaField::Phone | MfaField::SmsCode | MfaField::SendSms
             if state.selected_method == AuthMethod::PhoneCode =>
         {
-            let interactive_state = if field == MfaField::SendSms && state.sms_resend_remaining > 0
-            {
+            let interactive_state = if field == MfaField::Phone && !state.phone_editable {
+                CPFIS_DISABLED
+            } else if field == MfaField::SendSms && state.sms_resend_remaining > 0 {
                 CPFIS_DISABLED
             } else {
                 CPFIS_NONE
@@ -712,6 +717,7 @@ mod tests {
     use crate::fields::MfaField;
     use crate::state::CredentialProviderState;
     use auth_core::{AuthMethod, MfaState};
+    use auth_ipc::{PhoneInputSource, PolicySnapshot};
     use windows::Win32::UI::Shell::{CPFIS_DISABLED, CPFS_DISPLAY_IN_SELECTED_TILE, CPFS_HIDDEN};
 
     #[test]
@@ -740,6 +746,26 @@ mod tests {
         );
         state.selected_method = AuthMethod::SecondPassword;
         assert_eq!(field_visibility(MfaField::Phone, &state).0, CPFS_HIDDEN);
+    }
+
+    #[test]
+    fn file_phone_policy_disables_phone_field_and_displays_masked_value() {
+        let mut state = CredentialProviderState::default();
+        state.apply_policy_snapshot(&PolicySnapshot {
+            auth_methods: vec![AuthMethod::PhoneCode],
+            phone_source: PhoneInputSource::ConfiguredFile,
+            masked_phone: Some("138****8888".to_owned()),
+            phone_editable: false,
+            mfa_timeout_seconds: 120,
+            sms_resend_seconds: 60,
+        });
+
+        assert_eq!(state.phone, "138****8888");
+        assert_eq!(field_visibility(MfaField::Phone, &state).1, CPFIS_DISABLED);
+        assert_eq!(
+            field_visibility(MfaField::SmsCode, &state).0,
+            CPFS_DISPLAY_IN_SELECTED_TILE
+        );
     }
 
     #[test]
