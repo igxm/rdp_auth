@@ -7,10 +7,18 @@ use auth_config::AppConfig;
 use auth_core::{is_valid_default_phone_number, mask_phone_number};
 use auth_ipc::{PhoneInputSource, PolicySnapshot};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PolicyContext {
     pub snapshot: PolicySnapshot,
+    pub configured_phones: Vec<ConfiguredPhone>,
     pub configured_phone: Option<String>,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct ConfiguredPhone {
+    pub choice_id: String,
+    pub raw_phone: String,
+    pub masked_phone: String,
 }
 
 pub fn load_policy_context_from_disk() -> PolicyContext {
@@ -19,10 +27,18 @@ pub fn load_policy_context_from_disk() -> PolicyContext {
 }
 
 pub fn policy_context_from_config(config: &AppConfig) -> PolicyContext {
-    let valid_configured_phone = Some(config.phone.number.as_str())
-        .filter(|phone| is_valid_default_phone_number(phone))
-        .map(ToOwned::to_owned);
-    let masked_phone = valid_configured_phone.as_deref().map(mask_phone_number);
+    let phone_numbers = if config.phone.numbers.is_empty() {
+        vec![config.phone.number.clone()]
+    } else {
+        config.phone.numbers.clone()
+    };
+    let configured_phones = configured_phones_from_numbers(&phone_numbers);
+    let masked_phone = configured_phones
+        .first()
+        .map(|phone| phone.masked_phone.clone());
+    let configured_phone = configured_phones
+        .first()
+        .map(|phone| phone.raw_phone.clone());
 
     PolicyContext {
         snapshot: PolicySnapshot {
@@ -33,8 +49,27 @@ pub fn policy_context_from_config(config: &AppConfig) -> PolicyContext {
             mfa_timeout_seconds: config.mfa.timeout_seconds,
             sms_resend_seconds: config.mfa.sms_resend_seconds,
         },
-        configured_phone: valid_configured_phone,
+        configured_phones,
+        configured_phone,
     }
+}
+
+fn configured_phones_from_numbers(numbers: &[String]) -> Vec<ConfiguredPhone> {
+    numbers
+        .iter()
+        .enumerate()
+        .filter(|(_, phone)| is_valid_default_phone_number(phone))
+        .map(|(index, phone)| {
+            // choice_id 是 CP/helper 之间后续选择手机号的唯一凭据，不能包含手机号数字。
+            // 完整手机号只留在 helper 内存中，策略快照和 IPC 只能使用该 ID 与脱敏显示值。
+            let choice_id = format!("phone-{index}");
+            ConfiguredPhone {
+                choice_id,
+                raw_phone: phone.clone(),
+                masked_phone: mask_phone_number(phone),
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -44,7 +79,7 @@ pub fn policy_snapshot_from_config(config: &AppConfig) -> PolicySnapshot {
 
 #[cfg(test)]
 mod tests {
-    use super::policy_snapshot_from_config;
+    use super::{policy_context_from_config, policy_snapshot_from_config};
     use auth_config::{AppConfig, PhoneConfig, PhoneSource};
     use auth_core::AuthMethod;
     use auth_ipc::PhoneInputSource;
@@ -77,11 +112,16 @@ mod tests {
             ..Default::default()
         };
 
-        let snapshot = policy_snapshot_from_config(&config);
+        let context = policy_context_from_config(&config);
+        let snapshot = context.snapshot;
 
         assert_eq!(snapshot.phone_source, PhoneInputSource::Configured);
         assert!(!snapshot.phone_editable);
         assert_eq!(snapshot.masked_phone, Some("138****8888".to_owned()));
+        assert_eq!(context.configured_phone, Some("13812348888".to_owned()));
+        assert_eq!(context.configured_phones.len(), 1);
+        assert_eq!(context.configured_phones[0].choice_id, "phone-0");
+        assert_eq!(context.configured_phones[0].masked_phone, "138****8888");
     }
 
     #[test]
@@ -95,8 +135,48 @@ mod tests {
             ..Default::default()
         };
 
-        let snapshot = policy_snapshot_from_config(&config);
+        let context = policy_context_from_config(&config);
+        let snapshot = context.snapshot;
 
         assert_eq!(snapshot.masked_phone, None);
+        assert_eq!(context.configured_phone, None);
+        assert!(context.configured_phones.is_empty());
+    }
+
+    #[test]
+    fn configured_phone_list_returns_masked_choices_without_raw_snapshot() {
+        let config = AppConfig {
+            phone: PhoneConfig {
+                source: PhoneSource::Config,
+                number: "13800000000".to_owned(),
+                numbers: vec![
+                    "bad".to_owned(),
+                    "13812348888".to_owned(),
+                    "13912349999".to_owned(),
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+        .normalized();
+
+        let context = policy_context_from_config(&config);
+        let snapshot_debug = format!("{:?}", context.snapshot);
+
+        assert_eq!(context.configured_phone, Some("13812348888".to_owned()));
+        assert_eq!(
+            context
+                .configured_phones
+                .iter()
+                .map(|phone| (phone.choice_id.as_str(), phone.masked_phone.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("phone-1", "138****8888"), ("phone-2", "139****9999")]
+        );
+        assert_eq!(
+            context.snapshot.masked_phone,
+            Some("138****8888".to_owned())
+        );
+        assert!(!snapshot_debug.contains("13812348888"));
+        assert!(!snapshot_debug.contains("13912349999"));
     }
 }

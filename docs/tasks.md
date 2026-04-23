@@ -207,8 +207,8 @@
 - [ ] 扩展 `send_sms` 请求：携带 `phone_choice_id`，helper 在本进程内映射到完整手机号后发送短信；找不到 ID、配置变更或号码非法时 fail closed。
 - [x] helper 对手机号再次执行格式校验，禁止只依赖 Credential Provider UI 校验；手机号非法时返回可展示错误且不调用真实短信 API。
 - [x] helper 实现配置手机号读取和校验：读取解密配置中的 `phone.number`，校验 `^1[3-9]\d{9}$`，只向 CP 返回脱敏手机号和不可编辑标记，日志不得记录完整手机号。
-- [ ] helper 支持配置多个手机号：读取 `phone.numbers`，兼容旧 `phone.number`，执行 trim、去空、去重、格式校验和脱敏；真实手机号只保存在 helper 内存中。
-- [ ] helper 为每个有效手机号生成非敏感 `phone_choice_id`，并维护 `phone_choice_id -> 完整手机号` 的内存映射；该映射不得写日志、IPC 或落盘。
+- [x] helper 支持配置多个手机号：读取 `phone.numbers`，兼容旧 `phone.number`，执行 trim、去空、去重、格式校验和脱敏；真实手机号只保存在 helper 内存中。
+- [x] helper 为每个有效手机号生成非敏感 `phone_choice_id`，并维护 `phone_choice_id -> 完整手机号` 的内存映射；该映射不得写日志、IPC 或落盘。
 - [x] helper 为每次 MFA 请求生成审计上下文 `AuditContext`：包含 request_id、session_id、client_ip、host_public_ip、host_private_ips、host_uuid 和认证方式。
 - [ ] helper 采集 RDP 连接用户 IP：优先按当前 Windows session 查询客户端地址；采集失败时填充 `unknown`，并记录脱敏诊断原因。
 - [x] helper 采集本机内网 IP 列表：枚举活动网卡，过滤 loopback、link-local、未启用网卡和明显无效地址，支持多网卡多 IP；失败或无可用内网地址时回退为 `unknown`。
