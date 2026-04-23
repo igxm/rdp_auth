@@ -158,7 +158,7 @@ pub struct CredentialProviderState {
     pub available_auth_methods: Vec<AuthMethod>,
     /// 手机号输入值。Credential Provider 进程内只短暂保存 UI 内容，不写日志。
     pub phone: String,
-    /// 手机号字段是否允许用户编辑。文件模式下 helper 只下发脱敏号码，CP 必须禁用编辑。
+    /// 手机号字段是否允许用户编辑。配置模式下 helper 只下发脱敏号码，CP 必须禁用编辑。
     pub phone_editable: bool,
     /// 短信验证码输入值。验证码属于敏感内容，只能保存在内存状态中。
     pub sms_code: String,
@@ -223,7 +223,7 @@ impl Default for CredentialProviderState {
 impl CredentialProviderState {
     /// 应用 helper 下发的脱敏策略快照。
     ///
-    /// 这里不读取手机号文件，也不接触真实手机号；文件模式只把 helper 返回的脱敏值显示在 UI 中，
+    /// 这里不读取业务配置，也不接触真实手机号；配置模式只把 helper 返回的脱敏值显示在 UI 中，
     /// 并禁用手机号输入框，避免 CP 进程保存或修改真实手机号。
     pub fn apply_policy_snapshot(&mut self, snapshot: &PolicySnapshot) {
         if !snapshot.auth_methods.is_empty() {
@@ -294,12 +294,12 @@ mod tests {
     }
 
     #[test]
-    fn file_phone_policy_snapshot_disables_phone_input_and_uses_masked_value() {
+    fn configured_phone_policy_snapshot_disables_phone_input_and_uses_masked_value() {
         let mut state = CredentialProviderState::default();
 
         state.apply_policy_snapshot(&PolicySnapshot {
             auth_methods: vec![AuthMethod::PhoneCode],
-            phone_source: PhoneInputSource::ConfiguredFile,
+            phone_source: PhoneInputSource::Configured,
             masked_phone: Some("138****8888".to_owned()),
             phone_editable: false,
             mfa_timeout_seconds: 90,

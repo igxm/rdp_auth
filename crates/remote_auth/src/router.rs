@@ -112,7 +112,7 @@ mod tests {
     fn routes_policy_snapshot_without_sensitive_phone() {
         let now = Instant::now();
         let mut sessions = SessionAuthState::new(Duration::from_secs(60));
-        let policy = policy_context_from_config(&AppConfig::default(), None);
+        let policy = policy_context_from_config(&AppConfig::default());
 
         let response = handle_request(
             IpcRequest::GetPolicySnapshot { session_id: 7 },
@@ -132,7 +132,7 @@ mod tests {
     fn routes_session_mark_and_query() {
         let now = Instant::now();
         let mut sessions = SessionAuthState::new(Duration::from_secs(60));
-        let policy = policy_context_from_config(&AppConfig::default(), None);
+        let policy = policy_context_from_config(&AppConfig::default());
 
         let mark = handle_request(
             IpcRequest::MarkSessionAuthenticated { session_id: 7 },
@@ -160,7 +160,7 @@ mod tests {
     fn routes_post_login_log_request() {
         let now = Instant::now();
         let mut sessions = SessionAuthState::new(Duration::from_secs(60));
-        let policy = policy_context_from_config(&AppConfig::default(), None);
+        let policy = policy_context_from_config(&AppConfig::default());
 
         let response = handle_request(
             IpcRequest::PostLoginLog {
@@ -182,7 +182,7 @@ mod tests {
     fn routes_mock_mfa_requests() {
         let now = Instant::now();
         let mut sessions = SessionAuthState::new(Duration::from_secs(60));
-        let policy = policy_context_from_config(&AppConfig::default(), None);
+        let policy = policy_context_from_config(&AppConfig::default());
 
         let send = handle_request(
             IpcRequest::SendSms {

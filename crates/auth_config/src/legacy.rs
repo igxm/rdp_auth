@@ -1,6 +1,6 @@
 //! 旧版配置兼容占位。
 //!
-//! 旧版 `reginfo.ini`、手机号文件和历史字段只允许由 helper 读取和迁移。Credential
+//! 旧版 `reginfo.ini`、历史手机号文件和历史字段只允许作为迁移输入。Credential
 //! Provider 不应直接打开这些文件，避免 LogonUI 被 IO、权限或解析错误拖住。
 
 use auth_core::AuthError;

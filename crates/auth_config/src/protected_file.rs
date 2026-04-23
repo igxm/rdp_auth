@@ -107,12 +107,14 @@ mod tests {
 
     #[test]
     fn aes_roundtrips_without_plaintext_leak() {
-        let plaintext = b"serveraddr = \"https://example.invalid\"\nhostuuid = \"abc\"\n";
+        let plaintext =
+            b"serveraddr = \"https://example.invalid\"\nhostuuid = \"abc\"\nnumber = \"13812348888\"\n";
         let protected = protect_config_bytes_with_machine_code(plaintext, MACHINE_CODE).unwrap();
 
         assert_eq!(protected.len() > NONCE_LEN, true);
         assert!(!String::from_utf8_lossy(&protected).contains("serveraddr"));
         assert!(!String::from_utf8_lossy(&protected).contains("hostuuid"));
+        assert!(!String::from_utf8_lossy(&protected).contains("13812348888"));
 
         let (decoded, metadata) =
             unprotect_config_bytes_with_machine_code(&protected, MACHINE_CODE).unwrap();

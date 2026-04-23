@@ -58,7 +58,7 @@ Helper 是复杂业务的承载点，但仍要拆清职责：
 - 请求路由只把 `auth_ipc::IpcRequest` 分发到业务 handler，不直接做文件解析或 HTTP 细节。
 - session 内存状态只保存 session id、认证状态、时间戳、TTL 和最近事件，不保存用户名、手机号、密码、验证码、token 或 serialization。
 - session notification 只把 lock、unlock、disconnect、logoff、session end 转换为 session 状态更新。
-- 手机号文件读取只在 helper 内完成，真实手机号只短暂用于发送短信，请求外层和 IPC 响应只允许脱敏值。
+- 配置手机号只在 helper 内从解密后的业务配置读取，真实手机号只短暂用于发送短信，请求外层和 IPC 响应只允许脱敏值。
 - API 调用必须通过 `auth_api`，HTTP 细节不能泄漏到 CP 或 `auth_ipc` 协议外层。
 - 审计日志只记录脱敏上下文和结果码，不记录敏感输入。
 
@@ -77,7 +77,7 @@ Helper 是复杂业务的承载点，但仍要拆清职责：
 1. VM 复测 RDP pass-through 主链路、缺失 serialization 断开保护、MFA 超时断开和短信倒计时 UI 刷新。
 2. 把超时、缺失 serialization 等待窗口、短信重新发送时间、helper IPC 超时和 session TTL 迁移到统一配置。
 3. 稳定 helper/IPC mock 服务和 helper 内存态 session 跟踪，把 CP 内 mock 逻辑逐步迁移到 helper。
-4. 接入真实 API、远程配置、手机号文件、审计日志和公网/内网 IP 采集。
+4. 接入真实 API、远程配置、旧版手机号文件迁移、审计日志和公网/内网 IP 采集。
 5. 在核心 helper、加密配置和 `register_tool` 能力稳定后，再开发独立管理 GUI。
 6. 最后接入微信扫码等扩展认证方式。
 

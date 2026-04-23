@@ -67,7 +67,7 @@ pub fn has_current_session_authenticated(
 
 /// 从 helper 获取 CP 可渲染的脱敏策略快照。
 ///
-/// 策略快照只允许包含认证方式、脱敏手机号、字段可编辑状态和超时配置。CP 不读取手机号文件，
+/// 策略快照只允许包含认证方式、脱敏手机号、字段可编辑状态和超时配置。CP 不读取配置手机号，
 /// 也不接收真实手机号；helper 异常时调用方继续使用本地安全默认值。
 pub fn get_current_policy_snapshot(timeout: Duration) -> Result<PolicySnapshot, HelperClientError> {
     let session_id = current_session_id().map_err(HelperClientError::SessionId)?;
@@ -225,7 +225,7 @@ mod tests {
             "策略已加载",
             IpcResponsePayload::PolicySnapshot(PolicySnapshot {
                 auth_methods: vec![auth_core::AuthMethod::PhoneCode],
-                phone_source: auth_ipc::PhoneInputSource::ConfiguredFile,
+                phone_source: auth_ipc::PhoneInputSource::Configured,
                 masked_phone: Some("138****8888".to_owned()),
                 phone_editable: false,
                 mfa_timeout_seconds: 90,

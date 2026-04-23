@@ -76,8 +76,8 @@ Windows session notification 接入后，在 VM 中验证：
 
 验证策略快照会影响 CP UI，且不泄漏真实手机号：
 
-1. 在 VM 快照中通过 `register_tool config export` 导出配置，修改为 `phone.source = "file"`，并设置 `phone.file_path = "C:\\ProgramData\\rdp_auth\\phone.txt"`。
-2. 在 `C:\ProgramData\rdp_auth\phone.txt` 写入测试手机号，例如 `13812348888`，再通过 `register_tool config import` 导入配置。
+1. 在 VM 快照中通过 `register_tool config export` 导出配置，修改为 `phone.source = "config"`，并设置 `phone.number = "13812348888"`。
+2. 通过 `register_tool config import` 导入配置；导入完成后删除或妥善保护导出的明文 TOML，因为其中短暂包含完整手机号。
 3. 启动 `remote_auth` 常驻 helper，确认它输出 `remote_auth helper 已启动`。
 4. 通过 RDP + NLA 进入 Credential Provider Tile，确认手机号字段显示为 `138****8888` 且不可编辑。
 5. 检查 CP 和 helper 诊断日志，只允许出现脱敏手机号或长度/布尔状态，不得出现完整手机号、用户名、密码、验证码、token 或 serialization。
@@ -88,4 +88,4 @@ Windows session notification 接入后，在 VM 中验证：
 - session 状态只保存在 helper 内存中，不写注册表、不写状态文件。
 - IPC 响应只返回布尔值、状态码、TTL/时间戳和脱敏策略。
 - 不通过 IPC 返回用户名、完整手机号、密码、验证码、token 或 RDP serialization。
-- Credential Provider 只做短超时 IPC 调用，不直接读取手机号文件、远程配置缓存或发起网络请求。
+- Credential Provider 只做短超时 IPC 调用，不直接读取配置手机号、远程配置缓存或发起网络请求。

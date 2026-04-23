@@ -17,7 +17,7 @@
 1. 先用 VM 验证现有 RDP pass-through 主链路、缺失 serialization 断开保护、MFA 超时断开和短信倒计时 UI 刷新，确认不会误断首次登录；当前任务目标暂不考虑 Windows Server 2008 R2 兼容。
 2. 再把超时、缺失 serialization 等待窗口、短信重新发送时间、helper IPC 超时、session 状态 TTL 等迁移到统一 TOML 配置，并让 `register_tool health` 能显示当前生效值。
 3. 然后实现 helper / IPC 的 mock 服务和 helper 内存态 session 跟踪，把 CP 内的 mock 逻辑逐步迁移到 helper，保持 Credential Provider DLL 轻量。
-4. 在 helper/IPC 稳定之后接入真实 API、远程配置、手机号文件、审计日志和公网/内网 IP 采集。
+4. 在 helper/IPC 稳定之后接入真实 API、远程配置、旧版手机号文件迁移、审计日志和公网/内网 IP 采集。
 5. Tauri 管理 GUI 只在核心 helper、加密配置和 `register_tool` 导入/导出能力稳定后开发，用于管理员查看 health、编辑配置和触发维护命令，不进入登录安全链路。
 6. 最后接入微信扫码等扩展认证方式；该阶段不应阻塞 RDP 主链路和锁屏断开问题的收敛。
 
@@ -25,15 +25,15 @@
 
 - **A级：已完成或只需复测确认。** Workspace 骨架、Credential Provider 加载、RDP inbound serialization 接收、Kerberos interactive/unlock 重新打包、mock MFA、MFA 超时断开、缺失 serialization 快速断开、短信按钮倒计时刷新等已经有实现记录，后续重点是 VM 回归和日志补齐。
 - **B级：可直接开发，风险较低。** 统一 TOML 配置、配置默认值、`register_tool health` 展示、`auth_core` 手机号校验、日志/错误处理依赖、配置解析单元测试、文档更新等不依赖 Windows 登录链路，可先在普通进程和单元测试里稳定。
-- **C级：依赖 helper/IPC 前置。** Windows session notification、helper 内存态 `SessionAuthState`、锁屏后立即断开策略、真实短信/二次密码 API、手机号文件读取、远程配置、审计上下文、公网/内网 IP 采集都应放在 helper 内完成；在 helper mock 服务可用前，Credential Provider 不应直接承接这些复杂逻辑。Tauri 管理 GUI 也属于该级别的后置任务，必须通过 helper 或 register_tool 管理接口工作，不能反向成为 helper 的前置依赖。
+- **C级：依赖 helper/IPC 前置。** Windows session notification、helper 内存态 `SessionAuthState`、锁屏后立即断开策略、真实短信/二次密码 API、配置手机号读取、旧版手机号文件迁移、远程配置、审计上下文、公网/内网 IP 采集都应放在 helper 或受控配置维护流程内完成；在 helper mock 服务可用前，Credential Provider 不应直接承接这些复杂逻辑。Tauri 管理 GUI 也属于该级别的后置任务，必须通过 helper 或 register_tool 管理接口工作，不能反向成为 helper 的前置依赖。
 - **D级：高风险，必须 VM 验证后定版。** Credential Provider Filter 隐藏默认 Provider、`CPUS_LOGON` 与 `CPUS_UNLOCK_WORKSTATION` 差异、RDP/NLA serialization 慢到窗口、跨进程 session 状态判断、LogonUI 字段刷新线程模型等都属于系统行为相关任务，不能只靠代码审查判断可行；Windows Server 2008 R2 兼容暂不纳入当前目标。
 - **暂缓项。** 真实 API、微信扫码、远程配置自动更新、复杂审计上报、Tauri 管理 GUI 美化和自动更新在 RDP 主链路、helper/IPC 和 VM 兼容矩阵稳定前不作为当前收敛目标，避免把问题定位范围扩大。
 
 ## 配置与文件读取边界
 
-- [x] 明确边界：Credential Provider DLL 不直接读取手机号文件、远程配置缓存、`reginfo.ini` 或复杂策略文件，避免 LogonUI 进程被磁盘 IO、权限、杀毒软件或配置解析错误拖垮。
+- [x] 明确边界：Credential Provider DLL 不直接读取配置手机号、旧版手机号文件、远程配置缓存、`reginfo.ini` 或复杂策略文件，避免 LogonUI 进程被磁盘 IO、权限、杀毒软件或配置解析错误拖垮。
 - [x] 明确边界：Credential Provider DLL 只消费 helper 通过 IPC 返回的策略快照，例如可用认证方式、手机号显示值、手机号是否可编辑、超时时间和错误提示。
-- [ ] helper 负责读取和校验手机号文件、远程配置缓存、`reginfo.ini`、公网 IP endpoint、认证方式开关和超时策略，并把结果转换为 CP 可直接渲染的脱敏策略。
+- [x] helper 负责读取和校验加密配置中的手机号、认证方式开关和超时策略，并把结果转换为 CP 可直接渲染的脱敏策略；旧版手机号文件只作为后续迁移输入，不作为运行期来源。
 - [x] helper 下发给 CP 的手机号策略只允许包含脱敏展示值和是否可编辑标记；真实手机号仅在 helper 内存中用于发送短信请求，不回传给 CP 日志。
 - [x] CP 与 helper IPC 增加 `get_policy_snapshot` 或等效请求，CP 初始化和刷新 UI 时通过该请求获取认证方式、手机号来源、脱敏手机号、字段可编辑状态和超时配置。
 
@@ -159,7 +159,7 @@
 - [x] 认证方式切换后，通过 `ICredentialProviderCredentialEvents` 主动通知 LogonUI 刷新字段，避免手机号/验证码/二次密码 UI 不同步。
 - [x] 实现输入框取值和状态文本刷新。
 - [x] 实现按钮点击回调。
-- [ ] 手机号认证支持两种来源：helper 从配置/文件读取手机号、用户手动输入手机号；来源策略由 helper 统一下发，Credential Provider 只负责展示和轻量校验。
+- [x] 手机号认证支持两种来源：helper 从加密配置读取手机号、用户手动输入手机号；来源策略由 helper 统一下发，Credential Provider 只负责展示和轻量校验。
 - [ ] helper 读取手机号模式：手机号字段显示 helper 返回的脱敏格式，例如 `138****8888`，并设置为不可编辑；Credential Provider 不接触真实手机号。
 - [ ] 手动输入手机号模式：手机号字段允许编辑，点击发送验证码前必须通过手机号正则校验，默认规则为 `^1[3-9]\d{9}$`。
 - [ ] 手机号不合法时不允许进入发送短信流程，刷新状态提示为“请输入正确的手机号”或“手机号配置无效，请联系管理员”。
@@ -195,11 +195,11 @@
 - [x] `auth_ipc` 增加 `clear_session_state` 请求：Credential Provider 或 register_tool 可请求清理指定 session 状态，用于断开、卸载或异常恢复。
 - [x] 所有 session 状态 IPC 必须设置极短超时；helper 不可用、超时或返回非法响应时，Credential Provider 回退到 fail closed 策略，不得放行。
 - [x] IPC 响应只返回布尔值、状态码、TTL/时间戳等非敏感信息，不返回用户标识、手机号、密码或原始凭证材料。
-- [x] 支持 `get_policy_snapshot` 请求：helper 读取本地配置和必要文件后，返回 CP 可渲染的脱敏策略快照，包括认证方式列表、手机号来源、脱敏手机号、手机号字段是否可编辑和超时配置；远程配置和用户可见提示待后续扩展协议字段。
+- [x] 支持 `get_policy_snapshot` 请求：helper 读取本地加密配置后，返回 CP 可渲染的脱敏策略快照，包括认证方式列表、手机号来源、脱敏手机号、手机号字段是否可编辑和超时配置；远程配置和用户可见提示待后续扩展协议字段。
 - [x] 支持 `send_sms` 请求。
-- [x] `send_sms` 请求携带手机号来源标记；文件读取手机号模式下 CP 不传真实手机号，helper 使用自己读取并校验过的真实手机号；手动输入模式下 CP 只传用户输入手机号。
+- [x] `send_sms` 请求携带手机号来源标记；配置手机号模式下 CP 不传真实手机号，helper 使用解密配置中已校验过的真实手机号；手动输入模式下 CP 只传用户输入手机号。
 - [x] helper 对手机号再次执行格式校验，禁止只依赖 Credential Provider UI 校验；手机号非法时返回可展示错误且不调用真实短信 API。
-- [x] helper 实现手机号文件读取和校验：读取 `PhoneFilePath`，校验 `^1[3-9]\d{9}$`，只向 CP 返回脱敏手机号和不可编辑标记，日志不得记录完整手机号。
+- [x] helper 实现配置手机号读取和校验：读取解密配置中的 `phone.number`，校验 `^1[3-9]\d{9}$`，只向 CP 返回脱敏手机号和不可编辑标记，日志不得记录完整手机号。
 - [x] helper 为每次 MFA 请求生成审计上下文 `AuditContext`：包含 request_id、session_id、client_ip、host_public_ip、host_private_ips、host_uuid 和认证方式。
 - [ ] helper 采集 RDP 连接用户 IP：优先按当前 Windows session 查询客户端地址；采集失败时填充 `unknown`，并记录脱敏诊断原因。
 - [ ] helper 采集本机内网 IP 列表：枚举活动网卡，过滤 loopback、link-local、未启用网卡和明显无效地址，支持多网卡多 IP。
@@ -220,7 +220,7 @@
 
 - [x] 确定配置集中化方案，详见 `docs/configuration.md`：本地人工维护配置使用 TOML，远程配置缓存可使用 JSON，注册表只保留最小引导项和应急开关。
 - [x] 配置采用单一文件为主，运行期推荐加密路径为 `C:\ProgramData\rdp_auth\config\rdp_auth.toml.enc`，TOML 只作为导入/导出的明文交换格式；如服务端下发天然是 JSON，可在远程缓存层保留 JSON 内存格式，但远程缓存落盘也必须加密。
-- [ ] 所有业务配置文件必须加密落盘：本地统一配置、远程配置缓存、手机号文件、旧版 `reginfo.ini` 迁移结果和后续新增认证/API 配置都不得以明文作为运行期配置文件。
+- [ ] 所有业务配置文件必须加密落盘：本地统一配置、远程配置缓存、旧版手机号文件迁移结果、旧版 `reginfo.ini` 迁移结果和后续新增认证/API 配置都不得以明文作为运行期配置文件。
 - [x] 将本地配置长期落盘路径调整为 AES 加密文件，例如 `C:\ProgramData\rdp_auth\config\rdp_auth.toml.enc`；TOML 仅作为导入/导出的明文交换格式。
 - [x] 配置加密方式改为 AES-256-GCM，文件内容保存 `nonce + ciphertext`，不再使用 envelope。
 - [x] 首次安装时根据机器信息生成唯一机器码，写入注册表 `MachineCode`，并使用该机器码派生 AES-256 key。
@@ -238,10 +238,10 @@
 - [x] 定义 RDP 断开策略配置，例如 `mfa.disconnect_when_missing_serialization = true`，应急关闭时必须记录脱敏诊断日志并保持 fail closed，不得绕过 MFA。
 - [x] 定义 helper session 状态配置，例如 `mfa.session_state_ttl_seconds`、`mfa.authenticated_session_short_grace_seconds`、`mfa.initial_login_grace_seconds`，用于区分已认证会话返回 LogonUI 和首次登录等待 serialization。
 - [x] 定义 helper IPC 超时配置，例如 `mfa.helper_ipc_timeout_ms`，默认应足够短，避免 LogonUI 被 helper 卡住。
-- [x] 定义手机号来源配置，例如 `phone.source = "file" | "input"`；默认建议为 `input`，避免文件缺失导致测试环境无法收验证码。
-- [x] 定义手机号文件路径配置，例如 `phone.file_path = "C:\\ProgramData\\rdp_auth\\phone.txt"`，仅在 `phone.source = "file"` 时由 helper 读取，Credential Provider 不直接打开该文件。
+- [x] 定义手机号来源配置，例如 `phone.source = "config" | "input"`；默认建议为 `input`，避免配置缺失导致测试环境无法收验证码。
+- [x] 定义配置手机号字段 `phone.number`，仅在 `phone.source = "config"` 时由 helper 从解密配置读取，Credential Provider 不接收完整手机号。
 - [x] `auth_core` 提供手机号校验和脱敏函数：合法手机号按 `138****8888` 格式展示，非法手机号不暴露前后缀。
-- [x] `auth_config` 只定义手机号来源、路径、优先级和错误类型；真实手机号文件读取、校验和 fail closed 决策由 helper 执行。
+- [x] `auth_config` 只定义手机号来源、配置手机号、优先级和错误类型；真实手机号校验和 fail closed 决策由 helper 执行。
 - [x] 定义公网 IP 查询配置，例如 `api.public_ip_endpoint`、`api.public_ip_timeout_seconds`、`api.require_public_ip_for_sms`，默认公网 IP 获取失败不阻断短信。
 - [x] 定义 IP 审计日志策略，例如 `audit.ip_logging = "full" | "masked" | "off"`，区分诊断日志和审计日志对 IP 字段的记录方式。
 - [x] 定义远程配置缓存路径，例如 `remote_config.cache_path = "C:\\ProgramData\\rdp_auth\\config\\remote_policy.json.enc"`，并定义刷新周期和 TTL；远程缓存加密落盘和完整性字段解析后续实现。
@@ -378,13 +378,13 @@
 - [x] 单元测试：helper 命名管道 transport 可以把单条 JSON 请求路由到 session 状态，并拒绝非法请求且不回显敏感字段。
 - [x] 单元测试：helper Windows session notification 映射 lock/unlock/disconnect/logoff/session end 事件，并只更新内存 session 状态。
 - [x] 单元测试：Credential Provider 侧 `has_authenticated_session` helper IPC 请求和响应解析稳定，且只使用非敏感 session 状态 payload。
-- [x] 单元测试：Credential Provider 侧 `get_policy_snapshot` helper IPC 请求和响应解析稳定，且不包含文件模式真实手机号。
+- [x] 单元测试：Credential Provider 侧 `get_policy_snapshot` helper IPC 请求和响应解析稳定，且不包含配置模式真实手机号。
 - [x] 单元测试：手机号校验规则，合法手机号满足 `^1[3-9]\d{9}$`，非法手机号被拒绝。
 - [x] 单元测试：手机号脱敏规则，`13812348888` 显示为 `138****8888`，非法手机号显示为安全占位文案。
-- [x] 单元测试：helper 文件读取手机号模式会让 CP 禁用手机号输入框，并且 UI 只显示脱敏手机号。
-- [x] 单元测试：helper 策略快照在文件手机号模式下只返回脱敏手机号，且手机号字段不可编辑。
+- [x] 单元测试：helper 配置手机号模式会让 CP 禁用手机号输入框，并且 UI 只显示脱敏手机号。
+- [x] 单元测试：helper 策略快照在配置手机号模式下只返回脱敏手机号，且手机号字段不可编辑。
 - [x] 单元测试：手动输入手机号模式下，手机号不合法时禁止发送验证码并显示错误提示。
-- [x] 单元测试：`get_policy_snapshot` 不包含文件模式真实手机号，只包含脱敏手机号、字段可编辑状态和策略来源。
+- [x] 单元测试：`get_policy_snapshot` 不包含配置模式真实手机号，只包含脱敏手机号、字段可编辑状态和策略来源。
 - [ ] 单元测试：本机内网 IP 枚举会过滤 loopback、link-local、未启用网卡，并保留多网卡有效地址。
 - [ ] 单元测试：公网 IP 获取失败时按策略返回 `unknown` 或 fail closed。
 - [x] 单元测试：审计日志字段序列化包含 client_ip、host_public_ip、host_private_ips、host_uuid、session_id，且不包含手机号、验证码、密码、token。
@@ -434,11 +434,11 @@
 - [ ] Windows 密码和 RDP 原始凭证 serialization 不写日志。
 - [ ] 验证码、二次密码、token 不写日志。
 - [ ] 手机号必须按脱敏格式写入 UI、诊断日志和 API 日志；禁止记录配置文件中的完整手机号。
-- [ ] 文件模式真实手机号只能由 helper 读取并短暂保存在内存中；Credential Provider、诊断日志、策略快照和远程配置缓存不得保存完整手机号。
+- [x] 配置模式真实手机号只能由 helper 从解密配置读取并短暂保存在内存中；Credential Provider、诊断日志、策略快照和远程配置缓存不得保存完整手机号。
 - [ ] client_ip、host_public_ip、host_private_ips 作为审计字段管理；诊断日志是否记录完整 IP 必须受配置控制。
 - [ ] 远程配置必须校验来源和完整性，至少包含版本号、更新时间、TTL 和签名或 HMAC；校验失败不得生效。
 - [ ] 远程配置下发不得绕过 MFA、不得关闭所有认证方式、不得禁用 fail closed 安全默认值。
-- [ ] 所有业务配置文件必须加密落盘；包括本地统一配置、远程配置缓存、手机号文件、旧版配置迁移结果和后续新增配置文件。
+- [ ] 所有业务配置文件必须加密落盘；包括本地统一配置、远程配置缓存、旧版手机号文件迁移结果、旧版配置迁移结果和后续新增配置文件。
 - [ ] 配置加密使用注册表机器码派生 AES key；机器码不得写入日志、配置文件或 IPC 响应。
 - [x] 配置导入/导出的明文文件只用于管理员维护，不作为运行期配置来源；工具必须提示明文风险，导入成功后运行期只读取加密文件。
 - [x] `health` 和诊断日志只允许记录配置文件路径、加密状态、版本、修改时间和错误码，不得记录解密后的配置内容。

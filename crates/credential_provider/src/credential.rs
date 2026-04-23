@@ -761,11 +761,11 @@ mod tests {
     }
 
     #[test]
-    fn file_phone_policy_disables_phone_field_and_displays_masked_value() {
+    fn configured_phone_policy_disables_phone_field_and_displays_masked_value() {
         let mut state = CredentialProviderState::default();
         state.apply_policy_snapshot(&PolicySnapshot {
             auth_methods: vec![AuthMethod::PhoneCode],
-            phone_source: PhoneInputSource::ConfiguredFile,
+            phone_source: PhoneInputSource::Configured,
             masked_phone: Some("138****8888".to_owned()),
             phone_editable: false,
             mfa_timeout_seconds: 120,

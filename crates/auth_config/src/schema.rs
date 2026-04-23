@@ -139,8 +139,9 @@ impl fmt::Display for AuthMethodsConfig {
 pub enum PhoneSource {
     /// 用户在 CP UI 中手动输入手机号。
     Input,
-    /// helper 从配置文件指定路径读取真实手机号，CP 只接收脱敏展示值。
-    File,
+    /// helper 从加密业务配置读取真实手机号，CP 只接收脱敏展示值。
+    #[serde(alias = "file")]
+    Config,
 }
 
 impl Default for PhoneSource {
@@ -149,13 +150,13 @@ impl Default for PhoneSource {
     }
 }
 
-/// 手机号策略配置。真实文件读取放在 helper，CP 不直接打开手机号文件。
+/// 手机号策略配置。真实手机号随业务配置加密落盘，CP 只通过 helper 获取脱敏快照。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PhoneConfig {
     #[serde(default)]
     pub source: PhoneSource,
-    #[serde(default = "default_phone_file_path")]
-    pub file_path: String,
+    #[serde(default)]
+    pub number: String,
     #[serde(default = "default_phone_validation_pattern")]
     pub validation_pattern: String,
 }
@@ -164,7 +165,7 @@ impl Default for PhoneConfig {
     fn default() -> Self {
         Self {
             source: PhoneSource::default(),
-            file_path: default_phone_file_path(),
+            number: String::new(),
             validation_pattern: default_phone_validation_pattern(),
         }
     }
@@ -172,9 +173,7 @@ impl Default for PhoneConfig {
 
 impl PhoneConfig {
     fn normalized(mut self) -> Self {
-        if self.file_path.trim().is_empty() {
-            self.file_path = default_phone_file_path();
-        }
+        self.number = self.number.trim().to_owned();
         if self.validation_pattern.trim().is_empty() {
             self.validation_pattern = default_phone_validation_pattern();
         }
@@ -500,10 +499,6 @@ fn default_auth_wechat() -> bool {
     false
 }
 
-fn default_phone_file_path() -> String {
-    r"C:\ProgramData\rdp_auth\phone.txt".to_owned()
-}
-
 fn default_phone_validation_pattern() -> String {
     r"^1[3-9]\d{9}$".to_owned()
 }
@@ -723,14 +718,14 @@ wechat = false
     }
 
     #[test]
-    fn phone_config_parses_file_source_and_defaults_empty_fields() {
+    fn phone_config_parses_config_source_and_trims_number() {
         let config = toml::from_str::<AppConfig>(
             r#"
 schema_version = 1
 
 [phone]
-source = "file"
-file_path = ""
+source = "config"
+number = " 13812348888 "
 validation_pattern = ""
 "#,
         )
@@ -738,9 +733,28 @@ validation_pattern = ""
 
         let config = config.normalized();
 
-        assert_eq!(config.phone.source, PhoneSource::File);
-        assert!(config.phone.file_path.ends_with(r"rdp_auth\phone.txt"));
+        assert_eq!(config.phone.source, PhoneSource::Config);
+        assert_eq!(config.phone.number, "13812348888");
         assert_eq!(config.phone.validation_pattern, r"^1[3-9]\d{9}$");
+    }
+
+    #[test]
+    fn legacy_file_source_aliases_to_config_without_reading_path() {
+        let config = toml::from_str::<AppConfig>(
+            r#"
+schema_version = 1
+
+[phone]
+source = "file"
+file_path = "C:\\ProgramData\\rdp_auth\\phone.txt"
+number = "13812348888"
+"#,
+        )
+        .unwrap()
+        .normalized();
+
+        assert_eq!(config.phone.source, PhoneSource::Config);
+        assert_eq!(config.phone.number, "13812348888");
     }
 
     #[test]

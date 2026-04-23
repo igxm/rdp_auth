@@ -1,8 +1,7 @@
 //! helper 侧策略快照构建。
 //!
-//! Credential Provider 只应该拿到可渲染的脱敏快照。真实手机号文件读取、配置归一化和超时策略聚合放在
-//! helper 内完成，避免 LogonUI 进程直接碰磁盘文件、复杂配置或未来的远程策略。
-use std::fs;
+//! Credential Provider 只应该拿到可渲染的脱敏快照。真实手机号随加密配置进入 helper，
+//! CP 不直接读取配置文件，也不接收完整手机号。
 
 use auth_config::{AppConfig, PhoneSource};
 use auth_core::{is_valid_default_phone_number, mask_phone_number};
@@ -16,26 +15,17 @@ pub struct PolicyContext {
 
 pub fn load_policy_context_from_disk() -> PolicyContext {
     let config = auth_config::load_app_config();
-    let configured_phone = match config.phone.source {
-        PhoneSource::Input => None,
-        PhoneSource::File => fs::read_to_string(&config.phone.file_path).ok(),
-    };
-
-    policy_context_from_config(&config, configured_phone.as_deref())
+    policy_context_from_config(&config)
 }
 
-pub fn policy_context_from_config(
-    config: &AppConfig,
-    configured_phone: Option<&str>,
-) -> PolicyContext {
+pub fn policy_context_from_config(config: &AppConfig) -> PolicyContext {
     let phone_source = match config.phone.source {
         PhoneSource::Input => PhoneInputSource::ManualInput,
-        PhoneSource::File => PhoneInputSource::ConfiguredFile,
+        PhoneSource::Config => PhoneInputSource::Configured,
     };
     let valid_configured_phone = match config.phone.source {
         PhoneSource::Input => None,
-        PhoneSource::File => configured_phone
-            .map(str::trim)
+        PhoneSource::Config => Some(config.phone.number.as_str())
             .filter(|phone| is_valid_default_phone_number(phone))
             .map(ToOwned::to_owned),
     };
@@ -55,11 +45,8 @@ pub fn policy_context_from_config(
 }
 
 #[cfg(test)]
-pub fn policy_snapshot_from_config(
-    config: &AppConfig,
-    configured_phone: Option<&str>,
-) -> PolicySnapshot {
-    policy_context_from_config(config, configured_phone).snapshot
+pub fn policy_snapshot_from_config(config: &AppConfig) -> PolicySnapshot {
+    policy_context_from_config(config).snapshot
 }
 
 #[cfg(test)]
@@ -73,7 +60,7 @@ mod tests {
     fn input_phone_policy_keeps_phone_editable_without_masked_value() {
         let config = AppConfig::default();
 
-        let snapshot = policy_snapshot_from_config(&config, None);
+        let snapshot = policy_snapshot_from_config(&config);
 
         assert_eq!(
             snapshot.auth_methods,
@@ -87,33 +74,35 @@ mod tests {
     }
 
     #[test]
-    fn file_phone_policy_returns_only_masked_phone() {
+    fn configured_phone_policy_returns_only_masked_phone() {
         let config = AppConfig {
             phone: PhoneConfig {
-                source: PhoneSource::File,
+                source: PhoneSource::Config,
+                number: "13812348888".to_owned(),
                 ..Default::default()
             },
             ..Default::default()
         };
 
-        let snapshot = policy_snapshot_from_config(&config, Some("13812348888\r\n"));
+        let snapshot = policy_snapshot_from_config(&config);
 
-        assert_eq!(snapshot.phone_source, PhoneInputSource::ConfiguredFile);
+        assert_eq!(snapshot.phone_source, PhoneInputSource::Configured);
         assert!(!snapshot.phone_editable);
         assert_eq!(snapshot.masked_phone, Some("138****8888".to_owned()));
     }
 
     #[test]
-    fn invalid_file_phone_does_not_leak_raw_value() {
+    fn invalid_configured_phone_does_not_leak_raw_value() {
         let config = AppConfig {
             phone: PhoneConfig {
-                source: PhoneSource::File,
+                source: PhoneSource::Config,
+                number: "not-a-phone".to_owned(),
                 ..Default::default()
             },
             ..Default::default()
         };
 
-        let snapshot = policy_snapshot_from_config(&config, Some("not-a-phone"));
+        let snapshot = policy_snapshot_from_config(&config);
 
         assert_eq!(snapshot.masked_phone, None);
     }

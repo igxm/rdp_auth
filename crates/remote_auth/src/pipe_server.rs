@@ -220,7 +220,7 @@ mod tests {
     fn test_server() -> PipeServer {
         PipeServer::new(
             SessionAuthState::new(Duration::from_secs(60)),
-            policy_context_from_config(&AppConfig::default(), None),
+            policy_context_from_config(&AppConfig::default()),
         )
     }
 

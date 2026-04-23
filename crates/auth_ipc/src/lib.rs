@@ -51,8 +51,9 @@ pub enum IpcRequest {
 pub enum PhoneInputSource {
     /// 用户在 CP UI 中手动输入，CP 可以传入手机号。
     ManualInput,
-    /// helper 自己从文件读取真实手机号，CP 不传真实手机号。
-    ConfiguredFile,
+    /// helper 自己从加密配置读取真实手机号，CP 不传真实手机号。
+    #[serde(alias = "configured_file")]
+    Configured,
 }
 
 /// helper 返回给 Credential Provider 的统一响应。
@@ -171,7 +172,7 @@ mod tests {
             "策略已加载",
             IpcResponsePayload::PolicySnapshot(PolicySnapshot {
                 auth_methods: vec![AuthMethod::PhoneCode, AuthMethod::SecondPassword],
-                phone_source: PhoneInputSource::ConfiguredFile,
+                phone_source: PhoneInputSource::Configured,
                 masked_phone: Some("138****8888".to_owned()),
                 phone_editable: false,
                 mfa_timeout_seconds: 120,

@@ -24,7 +24,7 @@
 ### Crate 职责边界
 
 - `auth_core`：只放纯业务类型和纯函数，例如认证方式、状态机、手机号校验和脱敏。不得依赖 Windows、注册表、文件系统、网络、IPC 或配置文件。
-- `auth_config`：只负责最小注册表引导项、加密配置文件读写、TOML schema、默认值归一化和旧配置迁移。不得发网络请求，不得读取真实手机号文件，不得承担 helper 运行状态。
+- `auth_config`：只负责最小注册表引导项、加密配置文件读写、TOML schema、默认值归一化和旧配置迁移。不得发网络请求，不得读取旧版真实手机号文件，不得承担 helper 运行状态。
 - `auth_ipc`：只定义 CP 与 helper 的协议类型、JSON 编解码和非敏感 payload。不得实现命名管道 IO、Windows session notification 或业务 API。
 - `auth_logging`：只定义统一日志目录、文件名、基础诊断记录格式、tracing 文件初始化和脱敏函数。所有程序新增诊断日志时必须先经过这一层，不得各自复制日志目录、文件名或脱敏规则。
 - `credential_provider`：只处理 Windows Credential Provider COM 生命周期、LogonUI UI、RDP inbound serialization、短超时 helper IPC 客户端和放行凭证打包。不得发网络请求，不得读取复杂业务文件，不得长期保存敏感状态。
@@ -54,7 +54,7 @@
 - session 状态：只维护内存态 session id、认证状态、时间戳、TTL 和最近事件；不得保存用户名、手机号、密码、验证码、token 或 serialization。
 - session notification：只把 lock、unlock、disconnect、logoff、session end 转换为 session 状态更新。
 - 策略快照：聚合本地加密配置、远程配置、手机号来源和超时策略，输出 CP 可渲染的脱敏快照。
-- 手机号文件读取：只在 helper 内完成，读取后立刻校验和脱敏，真实手机号只短暂用于发送短信。
+- 配置手机号读取：只在 helper 内从解密后的业务配置获取，读取后立刻校验和脱敏，真实手机号只短暂用于发送短信。
 - API client：只通过 `auth_api` 调用真实服务端，不把 HTTP 细节泄漏到 CP 或 IPC 协议外层。
 - 审计日志：只记录脱敏上下文和结果码，不记录敏感输入。
 
@@ -64,7 +64,7 @@
 - 业务配置统一进入加密配置文件，运行期不读取长期明文 TOML。
 - 明文 TOML 只允许通过 `register_tool config export/import` 或后续管理 GUI 的显式维护流程短暂出现。
 - `auth_config::schema` 只定义结构、默认值和归一化；不得打开文件、读注册表或发网络请求。
-- 远程配置缓存、手机号文件迁移结果、旧版配置迁移结果等业务配置文件都必须加密落盘。
+- 远程配置缓存、旧版手机号文件迁移结果、旧版配置迁移结果等业务配置文件都必须加密落盘。
 
 ### IPC 分层
 
