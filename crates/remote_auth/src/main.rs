@@ -10,6 +10,7 @@ mod pipe_server;
 mod policy;
 mod remote_config;
 mod router;
+mod session_notification;
 mod session_state;
 
 use std::time::Duration;
@@ -38,5 +39,7 @@ fn main() -> Result<()> {
     let response = IpcResponse::success("remote_auth helper 已启动");
     println!("{}", response.message);
     let mut server = pipe_server::PipeServer::new(sessions, policy);
+    let _session_notification =
+        session_notification::start_session_notification_listener(server.sessions());
     pipe_server::run_pipe_server(&mut server)
 }

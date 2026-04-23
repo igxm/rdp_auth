@@ -72,7 +72,7 @@
 - [x] 无 inbound serialization 的 RDP 孤立 MFA 入口必须断开：当前架构不保存首次登录密码，也不实现一次凭证采集，所以不能让用户停留在无法放行的 MFA Tile。
 - [ ] 增加按 session 区分的轻量历史状态标记：`ReportResult status=0` 后记录当前 session 曾成功完成 RDP MFA，用于区分“首次登录 serialization 慢到”和“已登录会话锁屏/注销后返回 LogonUI”。
 - [ ] 历史状态标记的目标实现放在 helper 内存中维护，不写注册表、不写状态文件；Credential Provider 只通过短超时 IPC 查询和更新。
-- [ ] helper 通过 Windows session notification 监听 session lock、unlock、disconnect、logoff 等事件，维护 session 内存状态并及时清理，Credential Provider 不直接监听 Win+L 事件。
+- [x] helper 通过 Windows session notification 监听 session lock、unlock、disconnect、logoff 等事件，维护 session 内存状态并及时清理，Credential Provider 不直接监听 Win+L 事件。
 - [ ] 如果 helper 不可用或 IPC 超时，Credential Provider 不得因此放行；回退到现有缺失 serialization 等待窗口和 fail closed 断开策略。
 - [ ] 缺失 serialization 保护按上下文使用不同等待窗口：已有成功会话返回 LogonUI 时使用短窗口，疑似首次登录时使用较宽松窗口，避免误断正常 RDP 登录。
 - [x] 将缺失 serialization 等待窗口改为统一配置项，例如 `mfa.missing_serialization_grace_seconds`，缺失或非法时使用安全默认值。
@@ -185,7 +185,7 @@
 - [x] `remote_auth` 启动命名管道服务。
 - [x] 将 `remote_auth` 设计为可常驻的 helper 进程，后续可由安装工具注册启动路径；启动失败不能阻塞 LogonUI。
 - [x] helper 内存中维护 `SessionAuthState`，按 Windows session id 记录是否已成功完成 RDP MFA、最后更新时间、最近一次会话事件和诊断状态码，不保存用户名、密码、验证码、token 或 serialization。
-- [ ] helper 使用 Windows session notification 订阅会话事件，至少处理 lock、unlock、disconnect、logoff；事件处理只更新内存状态和脱敏诊断日志。
+- [x] helper 使用 Windows session notification 订阅会话事件，至少处理 lock、unlock、disconnect、logoff；事件处理只更新内存状态和脱敏诊断日志。
 - [x] helper 在 logoff、session end、状态过期或显式清理请求时移除对应 session 内存状态，避免 session id 复用导致误判。
 - [x] 定义 session 状态 TTL，超过 TTL 的状态视为无效并清理；TTL 后续从统一配置读取。
 - [x] `auth_ipc` 定义 JSON 请求响应协议。
@@ -376,6 +376,7 @@
 - [x] 单元测试：`mark_session_authenticated`、`has_authenticated_session`、`clear_session_state` IPC 请求响应序列化。
 - [x] 单元测试：Credential Provider 侧 `ReportResult` 使用的 `mark_session_authenticated` helper IPC 请求构造稳定，且只包含 session id。
 - [x] 单元测试：helper 命名管道 transport 可以把单条 JSON 请求路由到 session 状态，并拒绝非法请求且不回显敏感字段。
+- [x] 单元测试：helper Windows session notification 映射 lock/unlock/disconnect/logoff/session end 事件，并只更新内存 session 状态。
 - [x] 单元测试：手机号校验规则，合法手机号满足 `^1[3-9]\d{9}$`，非法手机号被拒绝。
 - [x] 单元测试：手机号脱敏规则，`13812348888` 显示为 `138****8888`，非法手机号显示为安全占位文案。
 - [x] 单元测试：helper 文件读取手机号模式会让 CP 禁用手机号输入框，并且 UI 只显示脱敏手机号。

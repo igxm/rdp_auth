@@ -5,7 +5,14 @@
 //! 后续 Windows session notification 只负责调用本模块的标记和清理接口。
 
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+pub type SharedSessionAuthState = Arc<Mutex<SessionAuthState>>;
+
+pub fn shared_session_state(state: SessionAuthState) -> SharedSessionAuthState {
+    Arc::new(Mutex::new(state))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionAuthRecord {

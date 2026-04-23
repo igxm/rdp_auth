@@ -9,26 +9,44 @@ use auth_ipc::{IpcRequest, IpcResponse};
 use tracing::{error, info, warn};
 
 use crate::policy::PolicyContext;
-use crate::session_state::SessionAuthState;
+use crate::session_state::{SessionAuthState, SharedSessionAuthState, shared_session_state};
 
 pub const HELPER_PIPE_PATH: &str = r"\\.\pipe\rdp_auth_helper";
 const MAX_REQUEST_BYTES: usize = 64 * 1024;
 
 pub struct PipeServer {
-    sessions: SessionAuthState,
+    sessions: SharedSessionAuthState,
     policy: PolicyContext,
 }
 
 impl PipeServer {
     pub fn new(sessions: SessionAuthState, policy: PolicyContext) -> Self {
-        Self { sessions, policy }
+        Self {
+            sessions: shared_session_state(sessions),
+            policy,
+        }
+    }
+
+    pub fn sessions(&self) -> SharedSessionAuthState {
+        self.sessions.clone()
     }
 
     fn handle_request_json(&mut self, request_json: &str, now: Instant) -> IpcResponse {
         match IpcRequest::from_json(request_json.trim()) {
-            Ok(request) => {
-                crate::router::handle_request(request, &mut self.sessions, now, self.policy.clone())
-            }
+            Ok(request) => match self.sessions.lock() {
+                Ok(mut sessions) => {
+                    crate::router::handle_request(request, &mut sessions, now, self.policy.clone())
+                }
+                Err(error) => {
+                    warn!(
+                        target: "remote_auth",
+                        event = "session_state_lock_failed",
+                        error = %crate::diagnostics::sanitize_log_value(&error.to_string()),
+                        "helper session 状态锁已损坏"
+                    );
+                    IpcResponse::failure("session 状态不可用")
+                }
+            },
             Err(error) => {
                 warn!(
                     target: "remote_auth",
