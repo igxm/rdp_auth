@@ -92,6 +92,7 @@ reg add "HKLM\SOFTWARE\rdp_auth\config" /v DisableMfa /t REG_DWORD /d 0 /f
 - `RDP 二次认证: 启用`
 - `本地控制台二次认证: 关闭`
 - `应急禁用开关: 关闭`
+- `ProgramData`、`Logs` 和 `Config` 目录状态为存在；`Config` 对应 `C:\ProgramData\rdp_auth\config`，用于加密配置和后续远程配置缓存。
 
 如果 Filter 缺失，RDP/NLA 凭证仍可能被系统默认 Password Provider 自动消费，表现为能看到 `RDP 二次认证` Tile，但登录不会停留在二次认证流程。
 

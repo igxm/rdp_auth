@@ -1,7 +1,7 @@
 //! ProgramData 运行目录初始化。
 //!
-//! Credential Provider 和 helper 后续都会把脱敏日志、二维码缓存和诊断信息放到
-//! `C:\ProgramData\rdp_auth` 下。注册工具负责创建目录，但不写敏感数据。
+//! Credential Provider 和 helper 后续都会把脱敏日志、远程配置缓存、二维码缓存和
+//! 诊断信息放到 `C:\ProgramData\rdp_auth` 下。注册工具负责创建目录，但不写敏感数据。
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -59,9 +59,17 @@ pub fn logs_dir() -> PathBuf {
     program_data_dir().join("logs")
 }
 
-/// 创建运行目录和日志目录。
+/// 远程配置和统一加密配置目录。
+///
+/// 该目录只作为加密配置文件落盘位置；明文 TOML/JSON 仍然只能通过管理员显式导入导出
+/// 短暂出现，不能被 helper 或 Credential Provider 当作运行期来源。
+pub fn config_dir() -> PathBuf {
+    program_data_dir().join("config")
+}
+
+/// 创建运行目录、日志目录和配置缓存目录。
 pub fn ensure_runtime_dirs() -> Result<(), String> {
-    for path in [program_data_dir(), logs_dir()] {
+    for path in [program_data_dir(), logs_dir(), config_dir()] {
         std::fs::create_dir_all(&path)
             .map_err(|error| format!("创建目录 `{}` 失败: {error}", path.display()))?;
     }
@@ -72,12 +80,19 @@ pub fn ensure_runtime_dirs() -> Result<(), String> {
 pub fn runtime_dirs_status() -> String {
     let data = program_data_dir();
     let logs = logs_dir();
+    let config = config_dir();
+    runtime_dirs_status_for_paths(&data, &logs, &config)
+}
+
+fn runtime_dirs_status_for_paths(data: &Path, logs: &Path, config: &Path) -> String {
     format!(
-        "ProgramData: {} [{}]\nLogs: {} [{}]",
+        "ProgramData: {} [{}]\nLogs: {} [{}]\nConfig: {} [{}]",
         data.display(),
         if data.is_dir() { "存在" } else { "缺失" },
         logs.display(),
         if logs.is_dir() { "存在" } else { "缺失" },
+        config.display(),
+        if config.is_dir() { "存在" } else { "缺失" },
     )
 }
 
@@ -129,7 +144,7 @@ fn latest_log_file(path: &Path) -> Option<LogFileStatus> {
 
 #[cfg(test)]
 mod tests {
-    use super::log_directory_status_for_path;
+    use super::{log_directory_status_for_path, runtime_dirs_status_for_paths};
     use std::fs;
 
     #[test]
@@ -161,5 +176,27 @@ mod tests {
         assert!(!status.to_string().contains("13812348888"));
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn runtime_status_includes_config_cache_directory() {
+        let root = std::env::temp_dir().join(format!(
+            "rdp_auth_runtime_dirs_status_test_{}",
+            std::process::id()
+        ));
+        let data = root.join("rdp_auth");
+        let logs = data.join("logs");
+        let config = data.join("config");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&logs).unwrap();
+
+        let status = runtime_dirs_status_for_paths(&data, &logs, &config);
+
+        assert!(status.contains("ProgramData"));
+        assert!(status.contains("Logs"));
+        assert!(status.contains("Config"));
+        assert!(status.contains("缺失"));
+
+        let _ = fs::remove_dir_all(&root);
     }
 }

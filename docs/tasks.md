@@ -338,7 +338,7 @@
 - [x] `register_tool status` / `health` 显示 helper session 状态策略：状态 TTL、首次登录等待窗口、已认证会话短等待窗口和 IPC 超时。
 - [x] 初始化 `C:\ProgramData\rdp_auth` 目录。
 - [x] 初始化日志目录。
-- [ ] 初始化远程配置缓存目录，例如 `C:\ProgramData\rdp_auth\config`。
+- [x] 初始化远程配置缓存目录，例如 `C:\ProgramData\rdp_auth\config`。
 - [ ] `register_tool install` 默认创建加密配置文件，不创建长期明文 TOML；如果发现旧明文配置，提示迁移或自动导入后加密。（当前默认新建 `.enc` 已完成，旧明文发现/迁移待补）
 - [ ] `register_tool uninstall` 不默认删除加密配置文件和加密备份，避免误删管理员配置；如新增清理参数，必须明确提示风险。
 - [ ] `register_tool uninstall` 区分核心登录组件和 Tauri 管理 GUI：卸载 GUI 不删除 CP/helper，卸载核心组件时默认保留加密配置和备份。
