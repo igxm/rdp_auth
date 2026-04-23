@@ -196,7 +196,7 @@
 - [x] `send_sms` 请求携带手机号来源标记；文件读取手机号模式下 CP 不传真实手机号，helper 使用自己读取并校验过的真实手机号；手动输入模式下 CP 只传用户输入手机号。
 - [x] helper 对手机号再次执行格式校验，禁止只依赖 Credential Provider UI 校验；手机号非法时返回可展示错误且不调用真实短信 API。
 - [x] helper 实现手机号文件读取和校验：读取 `PhoneFilePath`，校验 `^1[3-9]\d{9}$`，只向 CP 返回脱敏手机号和不可编辑标记，日志不得记录完整手机号。
-- [ ] helper 为每次 MFA 请求生成审计上下文 `AuditContext`：包含 request_id、session_id、client_ip、host_public_ip、host_private_ips、host_uuid 和认证方式。
+- [x] helper 为每次 MFA 请求生成审计上下文 `AuditContext`：包含 request_id、session_id、client_ip、host_public_ip、host_private_ips、host_uuid 和认证方式。
 - [ ] helper 采集 RDP 连接用户 IP：优先按当前 Windows session 查询客户端地址；采集失败时填充 `unknown`，并记录脱敏诊断原因。
 - [ ] helper 采集本机内网 IP 列表：枚举活动网卡，过滤 loopback、link-local、未启用网卡和明显无效地址，支持多网卡多 IP。
 - [ ] helper 获取本机公网 IP：优先调用自家服务端公网 IP 查询接口；失败时填充 `unknown`，默认不阻断短信发送，除非远程策略要求 fail closed。
@@ -378,7 +378,7 @@
 - [x] 单元测试：`get_policy_snapshot` 不包含文件模式真实手机号，只包含脱敏手机号、字段可编辑状态和策略来源。
 - [ ] 单元测试：本机内网 IP 枚举会过滤 loopback、link-local、未启用网卡，并保留多网卡有效地址。
 - [ ] 单元测试：公网 IP 获取失败时按策略返回 `unknown` 或 fail closed。
-- [ ] 单元测试：审计日志字段序列化包含 client_ip、host_public_ip、host_private_ips、host_uuid、session_id，且不包含手机号、验证码、密码、token。
+- [x] 单元测试：审计日志字段序列化包含 client_ip、host_public_ip、host_private_ips、host_uuid、session_id，且不包含手机号、验证码、密码、token。
 - [ ] 单元测试：远程配置版本、TTL、签名/校验字段解析，非法配置不能覆盖本地有效配置。
 - [ ] 集成测试：认证超时后自动断开当前 RDP 会话。（代码路径已实现，仍需 VM 验证）
 - [x] 单元测试：RDP 原始 Provider CLSID 可通过跨进程 handoff 文件恢复。
