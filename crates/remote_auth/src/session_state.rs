@@ -22,6 +22,7 @@ pub enum SessionEvent {
     Unlock,
     Disconnect,
     Logoff,
+    SessionEnd,
     Cleared,
 }
 
@@ -65,7 +66,11 @@ impl SessionAuthState {
     #[allow(dead_code)]
     pub fn record_event(&mut self, session_id: u32, event: SessionEvent) {
         match event {
-            SessionEvent::Disconnect | SessionEvent::Logoff | SessionEvent::Cleared => {
+            // session 结束类事件必须直接删除认证标记，避免 Windows 复用 session id 后继承旧 MFA 状态。
+            SessionEvent::Disconnect
+            | SessionEvent::Logoff
+            | SessionEvent::SessionEnd
+            | SessionEvent::Cleared => {
                 self.records.remove(&session_id);
             }
             SessionEvent::Lock | SessionEvent::Unlock | SessionEvent::Authenticated => {
@@ -114,7 +119,7 @@ mod tests {
     }
 
     #[test]
-    fn disconnect_and_logoff_clear_session_state() {
+    fn terminal_session_events_clear_session_state() {
         let now = Instant::now();
         let mut state = SessionAuthState::new(Duration::from_secs(60));
 
@@ -125,6 +130,10 @@ mod tests {
         state.mark_authenticated(8, now);
         state.record_event(8, SessionEvent::Logoff);
         assert!(!state.has_authenticated_session(8, now));
+
+        state.mark_authenticated(9, now);
+        state.record_event(9, SessionEvent::SessionEnd);
+        assert!(!state.has_authenticated_session(9, now));
     }
 
     #[test]

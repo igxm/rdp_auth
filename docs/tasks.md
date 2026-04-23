@@ -183,8 +183,8 @@
 - [ ] 将 `remote_auth` 设计为可常驻的 helper 进程，后续可由安装工具注册启动路径；启动失败不能阻塞 LogonUI。
 - [x] helper 内存中维护 `SessionAuthState`，按 Windows session id 记录是否已成功完成 RDP MFA、最后更新时间、最近一次会话事件和诊断状态码，不保存用户名、密码、验证码、token 或 serialization。
 - [ ] helper 使用 Windows session notification 订阅会话事件，至少处理 lock、unlock、disconnect、logoff；事件处理只更新内存状态和脱敏诊断日志。
-- [ ] helper 在 logoff、session end、状态过期或显式清理请求时移除对应 session 内存状态，避免 session id 复用导致误判。
-- [ ] 定义 session 状态 TTL，超过 TTL 的状态视为无效并清理；TTL 后续从统一配置读取。
+- [x] helper 在 logoff、session end、状态过期或显式清理请求时移除对应 session 内存状态，避免 session id 复用导致误判。
+- [x] 定义 session 状态 TTL，超过 TTL 的状态视为无效并清理；TTL 后续从统一配置读取。
 - [x] `auth_ipc` 定义 JSON 请求响应协议。
 - [x] `auth_ipc` 增加 `mark_session_authenticated` 请求：Credential Provider 在 `ReportResult status=0` 后通知 helper 标记当前 session 已完成 RDP MFA。
 - [x] `auth_ipc` 增加 `has_authenticated_session` 请求：Credential Provider 在 RDP 会话无 inbound serialization 时查询 helper，命中则直接走短等待/立即断开策略。
@@ -368,7 +368,7 @@
 - [ ] 单元测试：缺失 serialization 保护 generation 变化后旧定时器不会断开新登录尝试。
 - [ ] 单元测试：短信倒计时 generation 变化后旧刷新线程不会覆盖新倒计时。
 - [x] 单元测试：helper `SessionAuthState` 标记、查询、TTL 过期和清理逻辑。
-- [ ] 单元测试：helper 收到 logoff/disconnect/session end 事件后清理对应 session 状态。
+- [x] 单元测试：helper 收到 logoff/disconnect/session end 事件后清理对应 session 状态。
 - [x] 单元测试：`mark_session_authenticated`、`has_authenticated_session`、`clear_session_state` IPC 请求响应序列化。
 - [x] 单元测试：手机号校验规则，合法手机号满足 `^1[3-9]\d{9}$`，非法手机号被拒绝。
 - [x] 单元测试：手机号脱敏规则，`13812348888` 显示为 `138****8888`，非法手机号显示为安全占位文案。
