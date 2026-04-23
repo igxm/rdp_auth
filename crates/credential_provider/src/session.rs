@@ -56,7 +56,7 @@ pub fn is_current_rdp_session() -> bool {
     protocol_type == 2
 }
 
-fn current_session_id() -> Result<u32> {
+pub fn current_session_id() -> Result<u32> {
     let mut session_id = 0_u32;
     unsafe {
         // SAFETY: 输出指针指向当前栈变量；失败时返回 HRESULT，不使用未初始化 session id。

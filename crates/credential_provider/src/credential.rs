@@ -22,6 +22,7 @@ use windows::core::{BOOL, Error, IUnknownImpl, PCWSTR, PWSTR, Ref, Result, imple
 
 use crate::diagnostics::log_event;
 use crate::fields::MfaField;
+use crate::helper_client::{log_mark_result, mark_current_session_authenticated};
 use crate::memory::alloc_wide_string;
 use crate::session::disconnect_current_session;
 use crate::state::{CredentialProviderState, RDP_MFA_PROVIDER_CLSID};
@@ -566,6 +567,17 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
                 status.0, sub_status.0
             ),
         );
+        if status.0 == 0 {
+            let timeout_ms = {
+                self.state
+                    .lock()
+                    .expect("credential state poisoned")
+                    .helper_ipc_timeout_ms
+            };
+            log_mark_result(mark_current_session_authenticated(Duration::from_millis(
+                timeout_ms,
+            )));
+        }
         Ok(())
     }
 }

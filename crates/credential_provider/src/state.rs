@@ -177,6 +177,8 @@ pub struct CredentialProviderState {
     pub missing_serialization_grace_seconds: u64,
     /// 短信验证码重新发送间隔。helper 接入前由本地 TOML 配置控制 UI 倒计时。
     pub sms_resend_seconds: u32,
+    /// CP 调 helper 的短超时窗口。helper 不可用时必须快速失败，不能卡住 LogonUI。
+    pub helper_ipc_timeout_ms: u64,
     /// 无 inbound serialization 时是否断开 RDP。安全默认值为启用。
     pub disconnect_when_missing_serialization: bool,
     /// 超时定时器 generation。每次新的 RDP serialization 都递增，旧定时器醒来后据此自退。
@@ -211,6 +213,7 @@ impl Default for CredentialProviderState {
             mfa_timeout_seconds: mfa_config.timeout_seconds,
             missing_serialization_grace_seconds: mfa_config.missing_serialization_grace_seconds,
             sms_resend_seconds: mfa_config.sms_resend_seconds,
+            helper_ipc_timeout_ms: mfa_config.helper_ipc_timeout_ms,
             disconnect_when_missing_serialization: mfa_config.disconnect_when_missing_serialization,
             timeout_generation: 0,
         }
@@ -279,6 +282,7 @@ mod tests {
         assert_eq!(state.mfa_timeout_seconds, 120);
         assert_eq!(state.missing_serialization_grace_seconds, 1);
         assert_eq!(state.sms_resend_seconds, 60);
+        assert_eq!(state.helper_ipc_timeout_ms, 300);
         assert!(state.disconnect_when_missing_serialization);
         assert_eq!(state.timeout_generation, 0);
         assert_eq!(state.sms_resend_generation, 0);

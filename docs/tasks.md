@@ -190,6 +190,7 @@
 - [x] 定义 session 状态 TTL，超过 TTL 的状态视为无效并清理；TTL 后续从统一配置读取。
 - [x] `auth_ipc` 定义 JSON 请求响应协议。
 - [x] `auth_ipc` 增加 `mark_session_authenticated` 请求：Credential Provider 在 `ReportResult status=0` 后通知 helper 标记当前 session 已完成 RDP MFA。
+- [x] `credential_provider` 在 `ReportResult status=0` 后按 `mfa.helper_ipc_timeout_ms` 尝试通过短超时 helper IPC 写入 `mark_session_authenticated` 请求；helper 不可用时只记录脱敏诊断日志，不影响 LogonUI。
 - [x] `auth_ipc` 增加 `has_authenticated_session` 请求：Credential Provider 在 RDP 会话无 inbound serialization 时查询 helper，命中则直接走短等待/立即断开策略。
 - [x] `auth_ipc` 增加 `clear_session_state` 请求：Credential Provider 或 register_tool 可请求清理指定 session 状态，用于断开、卸载或异常恢复。
 - [ ] 所有 session 状态 IPC 必须设置极短超时；helper 不可用、超时或返回非法响应时，Credential Provider 回退到 fail closed 策略，不得放行。
@@ -373,6 +374,7 @@
 - [x] 单元测试：helper `SessionAuthState` 标记、查询、TTL 过期和清理逻辑。
 - [x] 单元测试：helper 收到 logoff/disconnect/session end 事件后清理对应 session 状态。
 - [x] 单元测试：`mark_session_authenticated`、`has_authenticated_session`、`clear_session_state` IPC 请求响应序列化。
+- [x] 单元测试：Credential Provider 侧 `ReportResult` 使用的 `mark_session_authenticated` helper IPC 请求构造稳定，且只包含 session id。
 - [x] 单元测试：手机号校验规则，合法手机号满足 `^1[3-9]\d{9}$`，非法手机号被拒绝。
 - [x] 单元测试：手机号脱敏规则，`13812348888` 显示为 `138****8888`，非法手机号显示为安全占位文案。
 - [x] 单元测试：helper 文件读取手机号模式会让 CP 禁用手机号输入框，并且 UI 只显示脱敏手机号。

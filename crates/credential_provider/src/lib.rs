@@ -10,6 +10,7 @@ mod diagnostics;
 mod dll;
 mod fields;
 mod filter;
+mod helper_client;
 mod memory;
 mod provider;
 mod serialization;
