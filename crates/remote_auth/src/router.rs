@@ -54,7 +54,11 @@ pub fn handle_request(
         IpcRequest::VerifySecondPassword { password, .. } => {
             crate::mfa::handle_verify_second_password(&password)
         }
-        IpcRequest::PostLoginLog { .. } => IpcResponse::failure("该 helper 请求尚未接入"),
+        IpcRequest::PostLoginLog {
+            session_id,
+            method,
+            success,
+        } => crate::audit::handle_post_login_log(session_id, method, success),
     };
     info!(
         target: "remote_auth",
@@ -153,7 +157,7 @@ mod tests {
     }
 
     #[test]
-    fn routes_unimplemented_requests_as_fail_closed() {
+    fn routes_post_login_log_request() {
         let now = Instant::now();
         let mut sessions = SessionAuthState::new(Duration::from_secs(60));
         let policy = policy_context_from_config(&AppConfig::default(), None);
@@ -169,7 +173,8 @@ mod tests {
             policy,
         );
 
-        assert!(!response.ok);
+        assert!(response.ok);
+        assert_eq!(response.message, "登录日志已记录");
         assert_eq!(response.payload, None);
     }
 

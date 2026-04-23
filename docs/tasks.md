@@ -203,7 +203,7 @@
 - [x] helper 返回短信发送成功后，驱动 CP 进入 60 秒重新发送倒计时。（helper 已返回成功响应；CP 通过命名管道接入后使用该响应启动倒计时）
 - [x] 支持 `verify_sms` 请求。
 - [x] 支持 `verify_second_password` 请求。
-- [ ] 支持 `post_login_log` 请求。
+- [x] 支持 `post_login_log` 请求。
 - [x] 第一版 helper 先返回 mock 结果，用固定验证码验证主链路。
 - [ ] Credential Provider 通过命名管道调用 helper。
 - [ ] 增加超时处理，避免 LogonUI 长时间无响应。

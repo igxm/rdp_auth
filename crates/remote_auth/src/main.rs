@@ -2,6 +2,7 @@
 //!
 //! helper 后续会作为 Credential Provider DLL 的外部后台进程运行，负责配置解密、IPC、网络 API、
 //! 诊断日志和审计。把这些逻辑移出 DLL，是为了让 LogonUI 进程保持轻量、短超时和可恢复。
+mod audit;
 mod diagnostics;
 mod mfa;
 mod policy;
