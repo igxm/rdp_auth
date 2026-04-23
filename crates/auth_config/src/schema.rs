@@ -19,6 +19,14 @@ pub struct AppConfig {
     pub mfa: MfaConfig,
     #[serde(default)]
     pub phone: PhoneConfig,
+    #[serde(default)]
+    pub api: ApiConfig,
+    #[serde(default)]
+    pub audit: AuditConfig,
+    #[serde(default)]
+    pub remote_config: RemoteConfig,
+    #[serde(default)]
+    pub logging: LoggingConfig,
 }
 
 impl Default for AppConfig {
@@ -28,6 +36,10 @@ impl Default for AppConfig {
             auth_methods: AuthMethodsConfig::default(),
             mfa: MfaConfig::default(),
             phone: PhoneConfig::default(),
+            api: ApiConfig::default(),
+            audit: AuditConfig::default(),
+            remote_config: RemoteConfig::default(),
+            logging: LoggingConfig::default(),
         }
     }
 }
@@ -38,6 +50,10 @@ impl AppConfig {
         self.auth_methods = self.auth_methods.normalized();
         self.mfa = self.mfa.normalized();
         self.phone = self.phone.normalized();
+        self.api = self.api.normalized();
+        self.audit = self.audit.normalized();
+        self.remote_config = self.remote_config.normalized();
+        self.logging = self.logging.normalized();
         self
     }
 }
@@ -163,6 +179,181 @@ impl PhoneConfig {
             self.validation_pattern = default_phone_validation_pattern();
         }
         self
+    }
+}
+
+/// 服务端 API 与公网 IP 查询配置。真实请求由 helper/auth_api 执行，CP 不读取这些字段。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApiConfig {
+    #[serde(default = "default_api_base_url")]
+    pub base_url: String,
+    #[serde(default = "default_public_ip_endpoint")]
+    pub public_ip_endpoint: String,
+    #[serde(default = "default_api_connect_timeout_seconds")]
+    pub connect_timeout_seconds: u64,
+    #[serde(default = "default_api_request_timeout_seconds")]
+    pub request_timeout_seconds: u64,
+    #[serde(default = "default_require_public_ip_for_sms")]
+    pub require_public_ip_for_sms: bool,
+}
+
+impl Default for ApiConfig {
+    fn default() -> Self {
+        Self {
+            base_url: default_api_base_url(),
+            public_ip_endpoint: default_public_ip_endpoint(),
+            connect_timeout_seconds: default_api_connect_timeout_seconds(),
+            request_timeout_seconds: default_api_request_timeout_seconds(),
+            require_public_ip_for_sms: default_require_public_ip_for_sms(),
+        }
+    }
+}
+
+impl ApiConfig {
+    fn normalized(mut self) -> Self {
+        let default = Self::default();
+        if self.base_url.trim().is_empty() {
+            self.base_url = default.base_url;
+        }
+        if self.public_ip_endpoint.trim().is_empty() {
+            self.public_ip_endpoint = default.public_ip_endpoint;
+        }
+        self.connect_timeout_seconds = bounded_u64(
+            self.connect_timeout_seconds,
+            1,
+            60,
+            default.connect_timeout_seconds,
+        );
+        self.request_timeout_seconds = bounded_u64(
+            self.request_timeout_seconds,
+            1,
+            120,
+            default.request_timeout_seconds,
+        );
+        self
+    }
+}
+
+/// 审计日志配置。诊断日志和业务审计要分开，IP 字段按策略决定是否完整记录。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuditConfig {
+    #[serde(default)]
+    pub ip_logging: IpLoggingMode,
+    #[serde(default = "default_post_login_log")]
+    pub post_login_log: bool,
+}
+
+impl Default for AuditConfig {
+    fn default() -> Self {
+        Self {
+            ip_logging: IpLoggingMode::default(),
+            post_login_log: default_post_login_log(),
+        }
+    }
+}
+
+impl AuditConfig {
+    fn normalized(self) -> Self {
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum IpLoggingMode {
+    Full,
+    Masked,
+    Off,
+}
+
+impl Default for IpLoggingMode {
+    fn default() -> Self {
+        Self::Masked
+    }
+}
+
+/// 远程配置缓存与刷新策略。缓存文件也必须通过 AES 加密落盘。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteConfig {
+    #[serde(default = "default_remote_config_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_remote_config_endpoint")]
+    pub endpoint: String,
+    #[serde(default = "default_remote_config_cache_path")]
+    pub cache_path: String,
+    #[serde(default = "default_remote_config_refresh_seconds")]
+    pub refresh_seconds: u64,
+    #[serde(default = "default_remote_config_ttl_seconds")]
+    pub ttl_seconds: u64,
+}
+
+impl Default for RemoteConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_remote_config_enabled(),
+            endpoint: default_remote_config_endpoint(),
+            cache_path: default_remote_config_cache_path(),
+            refresh_seconds: default_remote_config_refresh_seconds(),
+            ttl_seconds: default_remote_config_ttl_seconds(),
+        }
+    }
+}
+
+impl RemoteConfig {
+    fn normalized(mut self) -> Self {
+        let default = Self::default();
+        if self.endpoint.trim().is_empty() {
+            self.endpoint = default.endpoint;
+        }
+        if self.cache_path.trim().is_empty() {
+            self.cache_path = default.cache_path;
+        }
+        self.refresh_seconds =
+            bounded_u64(self.refresh_seconds, 60, 86_400, default.refresh_seconds);
+        self.ttl_seconds = bounded_u64(self.ttl_seconds, 60, 604_800, default.ttl_seconds);
+        self
+    }
+}
+
+/// helper 诊断日志配置。运行期日志内容仍必须由调用方脱敏后写入。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LoggingConfig {
+    #[serde(default = "default_logging_dir")]
+    pub dir: String,
+    #[serde(default)]
+    pub diagnostic_level: DiagnosticLogLevel,
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            dir: default_logging_dir(),
+            diagnostic_level: DiagnosticLogLevel::default(),
+        }
+    }
+}
+
+impl LoggingConfig {
+    fn normalized(mut self) -> Self {
+        if self.dir.trim().is_empty() {
+            self.dir = default_logging_dir();
+        }
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DiagnosticLogLevel {
+    Error,
+    Warn,
+    Info,
+    Debug,
+}
+
+impl Default for DiagnosticLogLevel {
+    fn default() -> Self {
+        Self::Info
     }
 }
 
@@ -317,6 +508,54 @@ fn default_phone_validation_pattern() -> String {
     r"^1[3-9]\d{9}$".to_owned()
 }
 
+fn default_api_base_url() -> String {
+    "https://example.invalid".to_owned()
+}
+
+fn default_public_ip_endpoint() -> String {
+    "https://example.invalid/ip".to_owned()
+}
+
+fn default_api_connect_timeout_seconds() -> u64 {
+    5
+}
+
+fn default_api_request_timeout_seconds() -> u64 {
+    10
+}
+
+fn default_require_public_ip_for_sms() -> bool {
+    false
+}
+
+fn default_post_login_log() -> bool {
+    true
+}
+
+fn default_remote_config_enabled() -> bool {
+    false
+}
+
+fn default_remote_config_endpoint() -> String {
+    "/api/host_instance/config".to_owned()
+}
+
+fn default_remote_config_cache_path() -> String {
+    r"C:\ProgramData\rdp_auth\config\remote_policy.json.enc".to_owned()
+}
+
+fn default_remote_config_refresh_seconds() -> u64 {
+    300
+}
+
+fn default_remote_config_ttl_seconds() -> u64 {
+    900
+}
+
+fn default_logging_dir() -> String {
+    r"C:\ProgramData\rdp_auth\logs".to_owned()
+}
+
 fn default_mfa_timeout_seconds() -> u64 {
     120
 }
@@ -371,12 +610,14 @@ fn enabled_label(value: bool) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{AppConfig, AuthMethodsConfig, MfaConfig, PhoneSource};
+    use super::{
+        AppConfig, AuthMethodsConfig, DiagnosticLogLevel, IpLoggingMode, MfaConfig, PhoneSource,
+    };
     use auth_core::AuthMethod;
 
     #[test]
     fn partial_toml_uses_defaults() {
-        let config: AppConfig = toml::from_str(
+        let config = toml::from_str::<AppConfig>(
             r#"
 schema_version = 1
 
@@ -396,6 +637,10 @@ timeout_seconds = 180
             vec![AuthMethod::PhoneCode, AuthMethod::SecondPassword]
         );
         assert_eq!(config.phone.source, PhoneSource::Input);
+        assert_eq!(config.api.connect_timeout_seconds, 5);
+        assert_eq!(config.audit.ip_logging, IpLoggingMode::Masked);
+        assert!(!config.remote_config.enabled);
+        assert_eq!(config.logging.diagnostic_level, DiagnosticLogLevel::Info);
     }
 
     #[test]
@@ -414,6 +659,7 @@ timeout_seconds = 180
                 disconnect_when_missing_serialization: true,
             },
             phone: Default::default(),
+            ..Default::default()
         }
         .normalized();
 
@@ -422,7 +668,7 @@ timeout_seconds = 180
 
     #[test]
     fn auth_methods_parse_and_disable_hidden_methods() {
-        let config: AppConfig = toml::from_str(
+        let config = toml::from_str::<AppConfig>(
             r#"
 schema_version = 1
 
@@ -466,6 +712,7 @@ wechat = false
             },
             mfa: MfaConfig::default(),
             phone: Default::default(),
+            ..Default::default()
         }
         .normalized();
 
@@ -477,7 +724,7 @@ wechat = false
 
     #[test]
     fn phone_config_parses_file_source_and_defaults_empty_fields() {
-        let config: AppConfig = toml::from_str(
+        let config = toml::from_str::<AppConfig>(
             r#"
 schema_version = 1
 
@@ -494,5 +741,58 @@ validation_pattern = ""
         assert_eq!(config.phone.source, PhoneSource::File);
         assert!(config.phone.file_path.ends_with(r"rdp_auth\phone.txt"));
         assert_eq!(config.phone.validation_pattern, r"^1[3-9]\d{9}$");
+    }
+
+    #[test]
+    fn full_schema_groups_parse_and_normalize_ranges() {
+        let config = toml::from_str::<AppConfig>(
+            r#"
+schema_version = 1
+
+[api]
+base_url = ""
+public_ip_endpoint = ""
+connect_timeout_seconds = 0
+request_timeout_seconds = 999
+require_public_ip_for_sms = true
+
+[audit]
+ip_logging = "off"
+post_login_log = false
+
+[remote_config]
+enabled = true
+endpoint = ""
+cache_path = ""
+refresh_seconds = 1
+ttl_seconds = 9999999
+
+[logging]
+dir = ""
+diagnostic_level = "debug"
+"#,
+        )
+        .unwrap()
+        .normalized();
+
+        assert_eq!(config.api.base_url, "https://example.invalid");
+        assert_eq!(config.api.public_ip_endpoint, "https://example.invalid/ip");
+        assert_eq!(config.api.connect_timeout_seconds, 5);
+        assert_eq!(config.api.request_timeout_seconds, 10);
+        assert!(config.api.require_public_ip_for_sms);
+        assert_eq!(config.audit.ip_logging, IpLoggingMode::Off);
+        assert!(!config.audit.post_login_log);
+        assert!(config.remote_config.enabled);
+        assert_eq!(config.remote_config.endpoint, "/api/host_instance/config");
+        assert!(
+            config
+                .remote_config
+                .cache_path
+                .ends_with(r"rdp_auth\config\remote_policy.json.enc")
+        );
+        assert_eq!(config.remote_config.refresh_seconds, 300);
+        assert_eq!(config.remote_config.ttl_seconds, 900);
+        assert!(config.logging.dir.ends_with(r"rdp_auth\logs"));
+        assert_eq!(config.logging.diagnostic_level, DiagnosticLogLevel::Debug);
     }
 }

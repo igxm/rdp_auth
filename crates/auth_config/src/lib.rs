@@ -27,4 +27,7 @@ pub use machine_code::{
 pub use protected_file::{
     ConfigFileMetadata, ConfigProtectionError, protect_config_bytes, unprotect_config_bytes,
 };
-pub use schema::{AppConfig, AuthMethodsConfig, MfaConfig, PhoneConfig, PhoneSource};
+pub use schema::{
+    ApiConfig, AppConfig, AuditConfig, AuthMethodsConfig, DiagnosticLogLevel, IpLoggingMode,
+    LoggingConfig, MfaConfig, PhoneConfig, PhoneSource, RemoteConfig,
+};

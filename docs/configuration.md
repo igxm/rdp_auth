@@ -98,6 +98,8 @@ dir = "C:\\ProgramData\\rdp_auth\\logs"
 diagnostic_level = "info"
 ```
 
+当前 `auth_config` 已落地的 schema 包含 `[auth_methods]`、`[mfa]`、`[phone]`、`[api]`、`[audit]`、`[remote_config]`、`[logging]`。真实 API 调用、远程配置拉取、远程缓存加密落盘和完整性校验属于 helper/auth_api 后续任务，Credential Provider 不直接读取这些业务配置字段。
+
 ## 实现拆分
 
 - `register_tool`：安装时创建配置目录、生成/保存机器码并创建默认 AES 加密 TOML；已有文件不覆盖；注册表只写最小引导项和机器码；提供明文 TOML 的导入/导出维护命令。
