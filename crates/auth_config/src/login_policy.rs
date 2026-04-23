@@ -109,15 +109,11 @@ pub fn load_login_policy() -> LoginPolicy {
         return default_policy;
     };
 
-    LoginPolicy {
-        enable_rdp_mfa: read_bool_value(&key, VALUE_ENABLE_RDP_MFA, default_policy.enable_rdp_mfa),
-        enable_console_mfa: read_bool_value(
-            &key,
-            VALUE_ENABLE_CONSOLE_MFA,
-            default_policy.enable_console_mfa,
-        ),
-        disable_mfa: read_bool_value(&key, VALUE_DISABLE_MFA, default_policy.disable_mfa),
-    }
+    login_policy_from_registry_values(
+        key.get_value::<u32, _>(VALUE_ENABLE_RDP_MFA).ok(),
+        key.get_value::<u32, _>(VALUE_ENABLE_CONSOLE_MFA).ok(),
+        key.get_value::<u32, _>(VALUE_DISABLE_MFA).ok(),
+    )
 }
 
 /// 写入默认登录场景策略。
@@ -148,10 +144,24 @@ pub fn ensure_default_login_policy() -> Result<LoginPolicy> {
     Ok(load_login_policy())
 }
 
-fn read_bool_value(key: &RegKey, name: &str, default_value: bool) -> bool {
-    key.get_value::<u32, _>(name)
-        .map(|value| value != 0)
-        .unwrap_or(default_value)
+fn login_policy_from_registry_values(
+    enable_rdp_mfa: Option<u32>,
+    enable_console_mfa: Option<u32>,
+    disable_mfa: Option<u32>,
+) -> LoginPolicy {
+    let default_policy = LoginPolicy::default();
+    LoginPolicy {
+        enable_rdp_mfa: bool_from_registry_value(enable_rdp_mfa, default_policy.enable_rdp_mfa),
+        enable_console_mfa: bool_from_registry_value(
+            enable_console_mfa,
+            default_policy.enable_console_mfa,
+        ),
+        disable_mfa: bool_from_registry_value(disable_mfa, default_policy.disable_mfa),
+    }
+}
+
+fn bool_from_registry_value(value: Option<u32>, default_value: bool) -> bool {
+    value.map(|value| value != 0).unwrap_or(default_value)
 }
 
 fn write_bool_value_if_missing(key: &RegKey, name: &str, value: bool) -> Result<()> {
@@ -171,4 +181,39 @@ fn write_string_value_if_missing(key: &RegKey, name: &str, value: &str) -> Resul
 
     key.set_value(name, &value)
         .map_err(|error| Error::registry("写入登录策略失败", error))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LoginPolicy, login_policy_from_registry_values};
+
+    #[test]
+    fn missing_registry_values_use_safe_login_defaults() {
+        let policy = login_policy_from_registry_values(None, None, None);
+
+        assert_eq!(policy, LoginPolicy::default());
+        assert!(policy.should_route_rdp());
+        assert!(!policy.should_filter_console());
+    }
+
+    #[test]
+    fn registry_dword_zero_disables_corresponding_policy() {
+        let policy = login_policy_from_registry_values(Some(0), Some(0), Some(0));
+
+        assert!(!policy.enable_rdp_mfa);
+        assert!(!policy.enable_console_mfa);
+        assert!(!policy.disable_mfa);
+        assert!(!policy.should_route_rdp());
+    }
+
+    #[test]
+    fn registry_nonzero_values_are_treated_as_enabled() {
+        let policy = login_policy_from_registry_values(Some(2), Some(1), Some(1));
+
+        assert!(policy.enable_rdp_mfa);
+        assert!(policy.enable_console_mfa);
+        assert!(policy.disable_mfa);
+        assert!(!policy.should_route_rdp());
+        assert!(!policy.should_filter_console());
+    }
 }

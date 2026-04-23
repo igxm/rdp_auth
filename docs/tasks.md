@@ -387,7 +387,7 @@
 - [x] 单元测试：`Negotiate` authentication package 名称按 LSA 调用要求保留 NUL 结尾容量。
 - [x] 单元测试：Kerberos interactive packed buffer 使用相对偏移保存域、用户名、密码，并按 usage scenario 选择正确 message type。
 - [x] 单元测试：IPC 请求响应序列化。
-- [ ] 单元测试：注册表配置解析。
+- [x] 单元测试：注册表配置解析。
 - [x] 单元测试：API 错误映射。
 - [x] 单元测试：`thiserror` IPC 编解码错误能稳定映射到用户可见文案。
 - [x] 单元测试：日志脱敏函数会过滤手机号、验证码、密码、token、serialization 字节和换行符。
