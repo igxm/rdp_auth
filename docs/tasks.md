@@ -249,8 +249,8 @@
 - [x] 定义 helper IPC 超时配置，例如 `mfa.helper_ipc_timeout_ms`，默认应足够短，避免 LogonUI 被 helper 卡住。
 - [x] 定义手机号来源配置，例如 `phone.source = "config"`；旧版 `input` 仅保留解析兼容，运行期会归一化为 `config`。
 - [x] 定义配置手机号字段 `phone.number`，由 helper 从解密配置读取，Credential Provider 不接收完整手机号。
-- [ ] 定义多手机号配置字段 `phone.numbers`，用于管理员配置多个短信接收号码；`phone.number` 继续作为单手机号兼容字段。
-- [ ] `auth_config` 归一化多手机号配置：`numbers` 优先，缺失时从 `number` 生成单元素列表；保留原始完整号码只在解密后的配置结构中，Display/health 不输出完整手机号。
+- [x] 定义多手机号配置字段 `phone.numbers`，用于管理员配置多个短信接收号码；`phone.number` 继续作为单手机号兼容字段。
+- [x] `auth_config` 归一化多手机号配置：`numbers` 优先，缺失时从 `number` 生成单元素列表；保留原始完整号码只在解密后的配置结构中，Display/health 不输出完整手机号。
 - [x] `auth_core` 提供手机号校验和脱敏函数：合法手机号按 `138****8888` 格式展示，非法手机号不暴露前后缀。
 - [x] `auth_config` 只定义手机号来源、配置手机号、优先级和错误类型；真实手机号校验和 fail closed 决策由 helper 执行。
 - [x] 定义公网 IP 查询配置，例如 `api.public_ip_endpoint`、`api.public_ip_timeout_seconds`、`api.require_public_ip_for_sms`，默认公网 IP 获取失败不阻断短信。
@@ -396,7 +396,7 @@
 - [x] 单元测试：helper 策略快照在配置手机号模式下只返回脱敏手机号，且手机号字段不可编辑。
 - [x] 单元测试：取消手动输入手机号模式后，旧版可编辑策略会被 CP 强制收敛为只读展示，短信 IPC 不携带手机号。
 - [x] 单元测试：`get_policy_snapshot` 不包含配置模式真实手机号，只包含脱敏手机号、字段可编辑状态和策略来源。
-- [ ] 单元测试：`phone.numbers` 解析、归一化、去重和 fallback 到旧 `phone.number`，非法号码不会进入 helper 可用列表。
+- [x] 单元测试：`phone.numbers` 解析、归一化、去空、去重和 fallback 到旧 `phone.number`；号码合法性仍留给 helper 二次校验。
 - [ ] 单元测试：多手机号策略快照只包含 `phone_choice_id` 和脱敏手机号，不包含完整手机号。
 - [ ] 单元测试：`send_sms` / `verify_sms` 只携带 `phone_choice_id`，helper 用该 ID 映射完整手机号；未知 ID、空列表和非法配置都 fail closed。
 - [ ] 单元测试：Credential Provider 多手机号选择框只保存脱敏展示值和 `phone_choice_id`，选择变化不会把完整手机号写入状态或日志。

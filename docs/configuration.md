@@ -73,6 +73,7 @@ fail_closed = true
 [phone]
 source = "config"
 number = "13812348888"
+numbers = ["13812348888", "13912349999"]
 validation_pattern = "^1[3-9]\\d{9}$"
 
 [api]
@@ -104,7 +105,7 @@ diagnostic_level = "info"
 
 后续如果需要在二次认证页面提供多个手机号选择框，安全边界仍保持不变：完整手机号只能由 helper 从加密配置读取并短暂停留在 helper 内存中，不能进入 Credential Provider、IPC payload、诊断日志或错误文本。Credential Provider 只拿到可渲染的脱敏选项和非敏感选择 ID。
 
-建议配置保持单手机号向后兼容，同时新增多手机号列表：
+配置保持单手机号向后兼容，同时支持多手机号列表：
 
 ```toml
 [phone]
@@ -116,7 +117,7 @@ validation_pattern = "^1[3-9]\\d{9}$"
 
 归一化规则建议如下：
 
-- `number` 保留为兼容字段；`numbers` 存在时优先使用 `numbers`，否则把合法的 `number` 视为单元素列表。
+- `number` 保留为兼容字段；`numbers` 存在时优先使用 `numbers`，否则把非空的 `number` 视为单元素列表。
 - 每个号码在 helper 侧按统一规则校验、去重和脱敏；无有效号码时短信认证 fail closed，并向 CP 返回可展示错误。
 - helper 为每个有效号码生成不包含手机号数字的选择 ID，例如 `phone-0`、`phone-1` 或带配置版本的临时 ID。
 - 策略快照只包含 `{ id, masked }`，例如 `{ id = "phone-0", masked = "138****8888" }`。

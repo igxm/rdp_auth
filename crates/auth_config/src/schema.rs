@@ -157,6 +157,8 @@ pub struct PhoneConfig {
     pub source: PhoneSource,
     #[serde(default)]
     pub number: String,
+    #[serde(default)]
+    pub numbers: Vec<String>,
     #[serde(default = "default_phone_validation_pattern")]
     pub validation_pattern: String,
 }
@@ -166,6 +168,7 @@ impl Default for PhoneConfig {
         Self {
             source: PhoneSource::default(),
             number: String::new(),
+            numbers: Vec::new(),
             validation_pattern: default_phone_validation_pattern(),
         }
     }
@@ -177,11 +180,31 @@ impl PhoneConfig {
         // 运行期也强制收敛到配置来源，避免真实手机号经 LogonUI 字段或 IPC 流动。
         self.source = PhoneSource::Config;
         self.number = self.number.trim().to_owned();
+        self.numbers = normalized_phone_numbers(&self.number, self.numbers);
         if self.validation_pattern.trim().is_empty() {
             self.validation_pattern = default_phone_validation_pattern();
         }
         self
     }
+}
+
+fn normalized_phone_numbers(single_number: &str, numbers: Vec<String>) -> Vec<String> {
+    let candidates = if numbers.is_empty() {
+        vec![single_number.to_owned()]
+    } else {
+        numbers
+    };
+    let mut normalized = Vec::new();
+    for value in candidates {
+        let value = value.trim();
+        if value.is_empty() || normalized.iter().any(|existing| existing == value) {
+            continue;
+        }
+        // 配置层只做形态归一化，不在这里执行短信业务可用性判断。
+        // helper 会重新校验完整手机号并只向 CP 输出脱敏选择项，避免 schema 层承担运行态策略。
+        normalized.push(value.to_owned());
+    }
+    normalized
 }
 
 /// 服务端 API 与公网 IP 查询配置。真实请求由 helper/auth_api 执行，CP 不读取这些字段。
@@ -738,7 +761,59 @@ validation_pattern = ""
 
         assert_eq!(config.phone.source, PhoneSource::Config);
         assert_eq!(config.phone.number, "13812348888");
+        assert_eq!(config.phone.numbers, vec!["13812348888"]);
         assert_eq!(config.phone.validation_pattern, r"^1[3-9]\d{9}$");
+    }
+
+    #[test]
+    fn phone_numbers_parse_trim_dedupe_and_prefer_list() {
+        let config = toml::from_str::<AppConfig>(
+            r#"
+schema_version = 1
+
+[phone]
+source = "config"
+number = "13800000000"
+numbers = [" 13812348888 ", "", "13912349999", "13812348888"]
+"#,
+        )
+        .unwrap()
+        .normalized();
+
+        assert_eq!(config.phone.number, "13800000000");
+        assert_eq!(config.phone.numbers, vec!["13812348888", "13912349999"]);
+    }
+
+    #[test]
+    fn phone_numbers_fall_back_to_single_number() {
+        let config = toml::from_str::<AppConfig>(
+            r#"
+schema_version = 1
+
+[phone]
+number = " 13812348888 "
+"#,
+        )
+        .unwrap()
+        .normalized();
+
+        assert_eq!(config.phone.numbers, vec!["13812348888"]);
+    }
+
+    #[test]
+    fn phone_numbers_keep_invalid_values_for_helper_validation() {
+        let config = toml::from_str::<AppConfig>(
+            r#"
+schema_version = 1
+
+[phone]
+numbers = ["bad", "13812348888"]
+"#,
+        )
+        .unwrap()
+        .normalized();
+
+        assert_eq!(config.phone.numbers, vec!["bad", "13812348888"]);
     }
 
     #[test]
@@ -758,6 +833,7 @@ number = "13812348888"
 
         assert_eq!(config.phone.source, PhoneSource::Config);
         assert_eq!(config.phone.number, "13812348888");
+        assert_eq!(config.phone.numbers, vec!["13812348888"]);
     }
 
     #[test]
@@ -776,6 +852,7 @@ number = " 13812348888 "
 
         assert_eq!(config.phone.source, PhoneSource::Config);
         assert_eq!(config.phone.number, "13812348888");
+        assert_eq!(config.phone.numbers, vec!["13812348888"]);
     }
 
     #[test]
