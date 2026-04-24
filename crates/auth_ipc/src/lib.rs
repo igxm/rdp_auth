@@ -23,10 +23,17 @@ pub enum IpcRequest {
     HasAuthenticatedSession { session_id: u32 },
     /// 清理指定 session 的内存状态，用于断开、注销或异常恢复。
     ClearSessionState { session_id: u32 },
-    /// 请求服务端发送短信验证码。手机号只能由 helper 从加密配置读取，IPC 不携带真实号码。
-    SendSms { session_id: u32 },
-    /// 校验短信验证码。验证码仍属于敏感输入，后续应只走短超时 IPC 且不得写日志。
-    VerifySms { session_id: u32, code: String },
+    /// 请求服务端发送短信验证码。CP 只传非敏感手机号选择 ID，helper 在本进程内解析真实号码。
+    SendSms {
+        session_id: u32,
+        phone_choice_id: String,
+    },
+    /// 校验短信验证码。验证码仍属于敏感输入；手机号选择只允许使用非敏感 ID。
+    VerifySms {
+        session_id: u32,
+        phone_choice_id: String,
+        code: String,
+    },
     /// 校验二次密码。
     VerifySecondPassword { session_id: u32, password: String },
     /// 上报登录日志，后续会扩展来源 IP、RDP 用户、认证方式等字段。
@@ -228,19 +235,29 @@ mod tests {
 
     #[test]
     fn sms_requests_do_not_carry_phone_number() {
-        let send = IpcRequest::SendSms { session_id: 7 }.to_json().unwrap();
+        let send = IpcRequest::SendSms {
+            session_id: 7,
+            phone_choice_id: "phone-0".to_owned(),
+        }
+        .to_json()
+        .unwrap();
         let verify = IpcRequest::VerifySms {
             session_id: 7,
+            phone_choice_id: "phone-0".to_owned(),
             code: "123456".to_owned(),
         }
         .to_json()
         .unwrap();
 
-        assert!(!send.contains("phone"));
-        assert!(!verify.contains("phone"));
+        assert!(send.contains("phone_choice_id"));
+        assert!(!send.contains("13812348888"));
+        assert!(!verify.contains("13812348888"));
         assert_eq!(
             IpcRequest::from_json(&send).unwrap(),
-            IpcRequest::SendSms { session_id: 7 }
+            IpcRequest::SendSms {
+                session_id: 7,
+                phone_choice_id: "phone-0".to_owned()
+            }
         );
     }
 }

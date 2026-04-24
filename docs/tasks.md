@@ -204,7 +204,7 @@
 - [x] 扩展 `get_policy_snapshot`：新增 `phone_choices: [{ id, masked }]` 或等效结构；`id` 不得包含完整手机号、用户名或其它敏感信息，`masked` 只能是脱敏手机号。
 - [x] 支持 `send_sms` 请求。
 - [x] `send_sms` 请求不携带手机号；helper 使用解密配置中已校验过的真实手机号，避免真实手机号进入 IPC。
-- [ ] 扩展 `send_sms` 请求：携带 `phone_choice_id`，helper 在本进程内映射到完整手机号后发送短信；找不到 ID、配置变更或号码非法时 fail closed。
+- [x] 扩展 `send_sms` 请求：携带 `phone_choice_id`，helper 在本进程内映射到完整手机号后发送短信；找不到 ID、配置变更或号码非法时 fail closed。
 - [x] helper 对手机号再次执行格式校验，禁止只依赖 Credential Provider UI 校验；手机号非法时返回可展示错误且不调用真实短信 API。
 - [x] helper 实现配置手机号读取和校验：读取解密配置中的 `phone.number`，校验 `^1[3-9]\d{9}$`，只向 CP 返回脱敏手机号和不可编辑标记，日志不得记录完整手机号。
 - [x] helper 支持配置多个手机号：读取 `phone.numbers`，兼容旧 `phone.number`，执行 trim、去空、去重、格式校验和脱敏；真实手机号只保存在 helper 内存中。
@@ -398,7 +398,7 @@
 - [x] 单元测试：`get_policy_snapshot` 不包含配置模式真实手机号，只包含脱敏手机号、字段可编辑状态和策略来源。
 - [x] 单元测试：`phone.numbers` 解析、归一化、去空、去重和 fallback 到旧 `phone.number`；号码合法性仍留给 helper 二次校验。
 - [x] 单元测试：多手机号策略快照只包含 `phone_choice_id` 和脱敏手机号，不包含完整手机号。
-- [ ] 单元测试：`send_sms` / `verify_sms` 只携带 `phone_choice_id`，helper 用该 ID 映射完整手机号；未知 ID、空列表和非法配置都 fail closed。
+- [x] 单元测试：`send_sms` / `verify_sms` 只携带 `phone_choice_id`，helper 用该 ID 映射完整手机号；未知 ID、空列表和非法配置都 fail closed。
 - [ ] 单元测试：Credential Provider 多手机号选择框只保存脱敏展示值和 `phone_choice_id`，选择变化不会把完整手机号写入状态或日志。
 - [x] 单元测试：本机内网 IP 枚举会过滤 loopback、link-local、公网地址和明显无效地址，并保留多网卡有效内网地址。
 - [ ] 单元测试：公网 IP 获取失败时按策略返回 `unknown` 或 fail closed。

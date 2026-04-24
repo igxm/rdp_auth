@@ -9,15 +9,15 @@ use crate::policy::PolicyContext;
 const MOCK_SMS_CODE: &str = "123456";
 const MOCK_SECOND_PASSWORD: &str = "mock-password";
 
-pub fn handle_send_sms(policy: &PolicyContext) -> IpcResponse {
-    match resolve_configured_phone(policy) {
+pub fn handle_send_sms(phone_choice_id: &str, policy: &PolicyContext) -> IpcResponse {
+    match resolve_configured_phone(phone_choice_id, policy) {
         Ok(_) => IpcResponse::success("验证码已发送"),
         Err(message) => IpcResponse::failure(message),
     }
 }
 
-pub fn handle_verify_sms(code: &str, policy: &PolicyContext) -> IpcResponse {
-    if let Err(message) = resolve_configured_phone(policy) {
+pub fn handle_verify_sms(phone_choice_id: &str, code: &str, policy: &PolicyContext) -> IpcResponse {
+    if let Err(message) = resolve_configured_phone(phone_choice_id, policy) {
         return IpcResponse::failure(message);
     }
     if code.trim() == MOCK_SMS_CODE {
@@ -35,11 +35,17 @@ pub fn handle_verify_second_password(password: &str) -> IpcResponse {
     }
 }
 
-fn resolve_configured_phone(policy: &PolicyContext) -> Result<String, &'static str> {
-    // 这里故意不接收 CP 传入的手机号：手机号属于管理员配置数据，真实值只应短暂停留在 helper 内存中。
+fn resolve_configured_phone(
+    phone_choice_id: &str,
+    policy: &PolicyContext,
+) -> Result<String, &'static str> {
+    // helper 只接受非敏感选择 ID，不接受完整手机号。这样即使 CP/UI 未来支持多号码选择，
+    // 真实手机号也不会跨出 helper 进程边界。
     policy
-        .configured_phone
-        .clone()
+        .configured_phones
+        .iter()
+        .find(|phone| phone.choice_id == phone_choice_id)
+        .map(|phone| phone.raw_phone.clone())
         .ok_or("手机号配置无效，请联系管理员")
 }
 
@@ -52,7 +58,7 @@ mod tests {
     fn send_sms_requires_configured_phone() {
         let policy = policy_context_from_config(&AppConfig::default());
 
-        let response = handle_send_sms(&policy);
+        let response = handle_send_sms("phone-0", &policy);
 
         assert!(!response.ok);
         assert_eq!(response.message, "手机号配置无效，请联系管理员");
@@ -70,7 +76,7 @@ mod tests {
         };
         let policy = policy_context_from_config(&config);
 
-        let response = handle_send_sms(&policy);
+        let response = handle_send_sms("phone-0", &policy);
 
         assert!(response.ok);
     }
@@ -87,8 +93,26 @@ mod tests {
         };
         let policy = policy_context_from_config(&config);
 
-        assert!(handle_verify_sms("123456", &policy).ok);
-        assert!(!handle_verify_sms("000000", &policy).ok);
+        assert!(handle_verify_sms("phone-0", "123456", &policy).ok);
+        assert!(!handle_verify_sms("phone-0", "000000", &policy).ok);
+    }
+
+    #[test]
+    fn send_sms_rejects_unknown_phone_choice_id() {
+        let config = AppConfig {
+            phone: PhoneConfig {
+                source: PhoneSource::Config,
+                number: "13812348888".to_owned(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let policy = policy_context_from_config(&config);
+
+        let response = handle_send_sms("phone-999", &policy);
+
+        assert!(!response.ok);
+        assert_eq!(response.message, "手机号配置无效，请联系管理员");
     }
 
     #[test]

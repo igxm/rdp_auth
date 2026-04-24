@@ -45,8 +45,14 @@ pub fn handle_request(
             sessions.clear_session(session_id);
             IpcResponse::success("session 已清理")
         }
-        IpcRequest::SendSms { .. } => crate::mfa::handle_send_sms(&policy),
-        IpcRequest::VerifySms { code, .. } => crate::mfa::handle_verify_sms(&code, &policy),
+        IpcRequest::SendSms {
+            phone_choice_id, ..
+        } => crate::mfa::handle_send_sms(&phone_choice_id, &policy),
+        IpcRequest::VerifySms {
+            phone_choice_id,
+            code,
+            ..
+        } => crate::mfa::handle_verify_sms(&phone_choice_id, &code, &policy),
         IpcRequest::VerifySecondPassword { password, .. } => {
             crate::mfa::handle_verify_second_password(&password)
         }
@@ -88,7 +94,7 @@ fn request_session_id(request: &IpcRequest) -> u32 {
         | IpcRequest::MarkSessionAuthenticated { session_id }
         | IpcRequest::HasAuthenticatedSession { session_id }
         | IpcRequest::ClearSessionState { session_id }
-        | IpcRequest::SendSms { session_id }
+        | IpcRequest::SendSms { session_id, .. }
         | IpcRequest::VerifySms { session_id, .. }
         | IpcRequest::VerifySecondPassword { session_id, .. }
         | IpcRequest::PostLoginLog { session_id, .. } => *session_id,
@@ -223,7 +229,10 @@ mod tests {
         });
 
         let send = handle_request(
-            IpcRequest::SendSms { session_id: 7 },
+            IpcRequest::SendSms {
+                session_id: 7,
+                phone_choice_id: "phone-0".to_owned(),
+            },
             &mut sessions,
             now,
             policy.clone(),
@@ -233,6 +242,7 @@ mod tests {
         let verify_sms = handle_request(
             IpcRequest::VerifySms {
                 session_id: 7,
+                phone_choice_id: "phone-0".to_owned(),
                 code: "123456".to_owned(),
             },
             &mut sessions,
