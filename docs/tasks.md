@@ -26,7 +26,7 @@
 - [x] `phone_choice_id`
 - [x] `phone_choices_version`
 - [x] helper 内存态短信 challenge
-- [ ] 真实短信 API challenge 接入
+- [ ] 真实短信 API challenge 接入（真实后端待联调，当前已完成 HTTP 逻辑和 mock 服务验证）
 - [ ] 二次密码真实 API 接入
 - [ ] 审计上报真实 API 接入
 
@@ -37,6 +37,7 @@
 - [x] helper `send_sms` 已接入 `AuthApiClient::send_sms_code` 形状，使用真实手机号换取 `SmsChallenge`
 - [x] helper challenge 状态已支持从 mock token 切换为真实 `challenge_token`
 - [x] `verify_sms` 优先走 `challenge_token + code`
+- [x] `auth_api` 已完成真实 HTTP 请求代码，并通过 mock 服务验证 `send_sms` / `verify_sms`
 - [ ] challenge 过期、手机号切换、快照版本变化时 fail closed
 - [ ] `challenge_token` 不进入 IPC、CP 状态、日志、错误文本、策略快照或落盘
 
@@ -66,7 +67,8 @@
 
 - [ ] 公网 IP 获取失败时按策略返回 `unknown` 或 fail closed
 - [ ] MFA timeout generation 与 missing-serialization generation 的独立性边界
-- [ ] 真实 challenge 路径下的 `send_sms` / `verify_sms`
+- [x] `auth_api` mock 服务下的真实 HTTP `send_sms` / `verify_sms`
+- [ ] helper 接真实后端联调下的 `send_sms` / `verify_sms`
 
 ### 集成测试
 
