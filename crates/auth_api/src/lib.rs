@@ -12,6 +12,17 @@ use tracing::debug;
 pub type Result<T> = std::result::Result<T, ApiError>;
 pub type Error = ApiError;
 
+/// 发送短信后由服务端返回的 challenge 元数据。
+///
+/// `challenge_token` 后续会成为 verify_sms 的唯一校验凭据，因此它只能在 helper 内存和 helper -> 后端链路中出现。
+/// `auth_api` 层先把结构定义稳定下来，避免后续接入真实 HTTP 时在多个 crate 里重复发明字段名。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SmsChallenge {
+    pub challenge_token: String,
+    pub expires_in_seconds: u64,
+    pub resend_after_seconds: u64,
+}
+
 /// API 层可匹配错误。Display 文案必须安全，不能包含手机号、验证码、密码、token 或原始响应体。
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ApiError {
@@ -105,7 +116,10 @@ impl AuthApiClient {
     }
 
     /// 请求发送短信验证码。当前只返回未接入错误，避免维护人员误以为已经调用真实服务端。
-    pub fn send_sms_code(&self, _phone: &str) -> Result<()> {
+    ///
+    /// 这里保留完整手机号入参是因为 helper -> 后端仍需要按真实手机号发起发送请求；
+    /// challenge_token 不会从这里返回到 CP/IPC，只会先留在 helper 内存态。
+    pub fn send_sms_code(&self, _phone: &str) -> Result<SmsChallenge> {
         debug!(
             target: "auth_api",
             operation = "send_sms_code",
@@ -117,8 +131,8 @@ impl AuthApiClient {
         })
     }
 
-    /// 校验短信验证码。具体路径未确定前不发起网络请求。
-    pub fn verify_sms_code(&self, _phone: &str, _code: &str) -> Result<()> {
+    /// 校验短信验证码。后续固定使用 challenge_token + code，不再重复把手机号传给后端。
+    pub fn verify_sms_code(&self, _challenge_token: &str, _code: &str) -> Result<()> {
         Err(ApiError::NotImplemented {
             operation: "verify_sms_code",
         })
@@ -165,7 +179,7 @@ fn trim_trailing_slash(value: String) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ApiError, AuthApiClient};
+    use super::{ApiError, AuthApiClient, SmsChallenge};
     use auth_config::ApiConfig;
     use std::time::Duration;
 
@@ -236,5 +250,18 @@ mod tests {
             }
         );
         assert!(!error.to_string().contains("13812348888"));
+    }
+
+    #[test]
+    fn sms_challenge_shape_is_stable_for_helper_memory_state() {
+        let challenge = SmsChallenge {
+            challenge_token: "opaque-token".to_owned(),
+            expires_in_seconds: 300,
+            resend_after_seconds: 60,
+        };
+
+        assert_eq!(challenge.challenge_token, "opaque-token");
+        assert_eq!(challenge.expires_in_seconds, 300);
+        assert_eq!(challenge.resend_after_seconds, 60);
     }
 }
