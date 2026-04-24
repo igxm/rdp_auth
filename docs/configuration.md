@@ -144,12 +144,12 @@ Credential Provider UI 可以把手机号字段从普通文本升级为组合框
 - 单元测试和 VM 测试必须覆盖 AES 加密文件读取、错误密文、错误机器码、旧版明文迁移和导入/导出；Windows Server 2008 R2 兼容性暂不纳入当前测试目标。
 
 
-## Challenge Token 方案（后续）
+## Challenge Token 方案
 
-后续接入真实短信 API 时，固定采用 `challenge_token` 方案，不在 `verify_sms` 阶段重复把手机号传回后端。
+当前 `verify_sms` 已优先采用 `challenge_token` 方案，不在校验阶段重复把手机号传回后端；`send_sms` 仍待接入真实 `SmsChallenge` 返回值，因此 helper 里的 challenge token 目前还是过渡态的内存 token。
 
-- `send_sms` 阶段由 helper 在本进程内把 `phone_choice_id` 映射到完整手机号，再向后端发起发送短信请求。
+- `send_sms` 阶段由 helper 在本进程内把 `phone_choice_id` 映射到完整手机号，再向后端发起发送短信请求；真实 `send_sms -> SmsChallenge` 接口接入前，helper 先保留只存在于内存态的过渡 token。
 - 后端返回 opaque `challenge_token` 后，helper 只在内存中保存 `session_id`、`phone_choice_id`、`challenge_token`、过期时间和 challenge 状态，不落盘。
-- `verify_sms` 阶段由 helper 用 `challenge_token + code` 向后端校验，不在校验时重复把手机号从 CP 侧回传。
+- `verify_sms` 阶段由 helper 用 `challenge_token + code` 向后端校验；如果真实 verify 接口仍返回 `NotImplemented`，当前会临时回退到 mock 校验，避免在接口未落地前把现有登录链路全部打断。
 - Credential Provider、IPC 响应、策略快照、诊断日志、错误文本均不得包含 `challenge_token` 原值。
 - 如需防止旧 `phone_choice_id` 对应到新号码的错配，应在手机号选择快照中增加配置版本、代次或等效 challenge 上下文；helper 发现映射不一致时必须 fail closed，并提示用户重新选择手机号。

@@ -36,7 +36,7 @@
 
 - [ ] helper `send_sms` 接入 `AuthApiClient::send_sms_code`，使用真实手机号换取 `SmsChallenge`
 - [ ] helper challenge 状态从 mock token 切换为真实 `challenge_token`
-- [ ] `verify_sms` 优先走 `challenge_token + code`
+- [x] `verify_sms` 优先走 `challenge_token + code`
 - [ ] challenge 过期、手机号切换、快照版本变化时 fail closed
 - [ ] `challenge_token` 不进入 IPC、CP 状态、日志、错误文本、策略快照或落盘
 
@@ -119,6 +119,7 @@
 - [x] helper 内存态 challenge 状态
 - [x] `auth_api::SmsChallenge`
 - [x] `auth_api` 形状改为 `send_sms -> challenge`、`verify_sms -> challenge_token + code`
+- [x] `verify_sms` 已优先走 helper 内存态 `challenge_token + code`
 
 ## 6. 暂不处理
 
