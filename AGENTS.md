@@ -1,6 +1,6 @@
 # rdp_auth Agent Checklist
 
-本文件是后续 Codex/协作者的低 token 入口。完整规范见 [docs/development.md](E:/Developers/rdp_auth/docs/development.md)；如有冲突，以原文为准。
+本文件是后续 Codex/协作者的低 token 入口。建议先快速阅读 [docs/development-summary.md](E:/Developers/rdp_auth/docs/development-summary.md)，再按需查看 [docs/development.md](E:/Developers/rdp_auth/docs/development.md)。如有冲突，以 `docs/development.md` 为准。
 
 ## 1. 开始前
 
