@@ -192,7 +192,8 @@ mod tests {
         HelperClientError, clear_session_state_request, mark_session_authenticated_request,
     };
     use auth_ipc::{
-        IpcRequest, IpcResponse, IpcResponsePayload, PolicySnapshot, SessionStateResponse,
+        IpcRequest, IpcResponse, IpcResponsePayload, PhoneChoiceSnapshot, PolicySnapshot,
+        SessionStateResponse,
     };
 
     #[test]
@@ -275,6 +276,10 @@ mod tests {
                 auth_methods: vec![auth_core::AuthMethod::PhoneCode],
                 phone_source: auth_ipc::PhoneInputSource::Configured,
                 masked_phone: Some("138****8888".to_owned()),
+                phone_choices: vec![PhoneChoiceSnapshot {
+                    id: "phone-0".to_owned(),
+                    masked: "138****8888".to_owned(),
+                }],
                 phone_editable: false,
                 mfa_timeout_seconds: 90,
                 sms_resend_seconds: 45,

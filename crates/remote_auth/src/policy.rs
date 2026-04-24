@@ -5,7 +5,7 @@
 
 use auth_config::AppConfig;
 use auth_core::{is_valid_default_phone_number, mask_phone_number};
-use auth_ipc::{PhoneInputSource, PolicySnapshot};
+use auth_ipc::{PhoneChoiceSnapshot, PhoneInputSource, PolicySnapshot};
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct PolicyContext {
@@ -45,6 +45,13 @@ pub fn policy_context_from_config(config: &AppConfig) -> PolicyContext {
             auth_methods: config.auth_methods.enabled_methods(),
             phone_source: PhoneInputSource::Configured,
             masked_phone,
+            phone_choices: configured_phones
+                .iter()
+                .map(|phone| PhoneChoiceSnapshot {
+                    id: phone.choice_id.clone(),
+                    masked: phone.masked_phone.clone(),
+                })
+                .collect(),
             phone_editable: false,
             mfa_timeout_seconds: config.mfa.timeout_seconds,
             sms_resend_seconds: config.mfa.sms_resend_seconds,
@@ -82,7 +89,7 @@ mod tests {
     use super::{policy_context_from_config, policy_snapshot_from_config};
     use auth_config::{AppConfig, PhoneConfig, PhoneSource};
     use auth_core::AuthMethod;
-    use auth_ipc::PhoneInputSource;
+    use auth_ipc::{PhoneChoiceSnapshot, PhoneInputSource};
 
     #[test]
     fn default_phone_policy_requires_configured_phone_without_input() {
@@ -118,6 +125,13 @@ mod tests {
         assert_eq!(snapshot.phone_source, PhoneInputSource::Configured);
         assert!(!snapshot.phone_editable);
         assert_eq!(snapshot.masked_phone, Some("138****8888".to_owned()));
+        assert_eq!(
+            snapshot.phone_choices,
+            vec![PhoneChoiceSnapshot {
+                id: "phone-0".to_owned(),
+                masked: "138****8888".to_owned()
+            }]
+        );
         assert_eq!(context.configured_phone, Some("13812348888".to_owned()));
         assert_eq!(context.configured_phones.len(), 1);
         assert_eq!(context.configured_phones[0].choice_id, "phone-0");
@@ -139,6 +153,7 @@ mod tests {
         let snapshot = context.snapshot;
 
         assert_eq!(snapshot.masked_phone, None);
+        assert!(snapshot.phone_choices.is_empty());
         assert_eq!(context.configured_phone, None);
         assert!(context.configured_phones.is_empty());
     }
@@ -175,6 +190,19 @@ mod tests {
         assert_eq!(
             context.snapshot.masked_phone,
             Some("138****8888".to_owned())
+        );
+        assert_eq!(
+            context.snapshot.phone_choices,
+            vec![
+                PhoneChoiceSnapshot {
+                    id: "phone-1".to_owned(),
+                    masked: "138****8888".to_owned()
+                },
+                PhoneChoiceSnapshot {
+                    id: "phone-2".to_owned(),
+                    masked: "139****9999".to_owned()
+                },
+            ]
         );
         assert!(!snapshot_debug.contains("13812348888"));
         assert!(!snapshot_debug.contains("13912349999"));

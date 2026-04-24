@@ -201,7 +201,7 @@
 - [x] 所有 session 状态 IPC 必须设置极短超时；helper 不可用、超时或返回非法响应时，Credential Provider 回退到 fail closed 策略，不得放行。
 - [x] IPC 响应只返回布尔值、状态码、TTL/时间戳等非敏感信息，不返回用户标识、手机号、密码或原始凭证材料。
 - [x] 支持 `get_policy_snapshot` 请求：helper 读取本地加密配置后，返回 CP 可渲染的脱敏策略快照，包括认证方式列表、手机号来源、脱敏手机号、手机号字段是否可编辑和超时配置；远程配置和用户可见提示待后续扩展协议字段。
-- [ ] 扩展 `get_policy_snapshot`：新增 `phone_choices: [{ id, masked }]` 或等效结构；`id` 不得包含完整手机号、用户名或其它敏感信息，`masked` 只能是脱敏手机号。
+- [x] 扩展 `get_policy_snapshot`：新增 `phone_choices: [{ id, masked }]` 或等效结构；`id` 不得包含完整手机号、用户名或其它敏感信息，`masked` 只能是脱敏手机号。
 - [x] 支持 `send_sms` 请求。
 - [x] `send_sms` 请求不携带手机号；helper 使用解密配置中已校验过的真实手机号，避免真实手机号进入 IPC。
 - [ ] 扩展 `send_sms` 请求：携带 `phone_choice_id`，helper 在本进程内映射到完整手机号后发送短信；找不到 ID、配置变更或号码非法时 fail closed。
@@ -397,7 +397,7 @@
 - [x] 单元测试：取消手动输入手机号模式后，旧版可编辑策略会被 CP 强制收敛为只读展示，短信 IPC 不携带手机号。
 - [x] 单元测试：`get_policy_snapshot` 不包含配置模式真实手机号，只包含脱敏手机号、字段可编辑状态和策略来源。
 - [x] 单元测试：`phone.numbers` 解析、归一化、去空、去重和 fallback 到旧 `phone.number`；号码合法性仍留给 helper 二次校验。
-- [ ] 单元测试：多手机号策略快照只包含 `phone_choice_id` 和脱敏手机号，不包含完整手机号。
+- [x] 单元测试：多手机号策略快照只包含 `phone_choice_id` 和脱敏手机号，不包含完整手机号。
 - [ ] 单元测试：`send_sms` / `verify_sms` 只携带 `phone_choice_id`，helper 用该 ID 映射完整手机号；未知 ID、空列表和非法配置都 fail closed。
 - [ ] 单元测试：Credential Provider 多手机号选择框只保存脱敏展示值和 `phone_choice_id`，选择变化不会把完整手机号写入状态或日志。
 - [x] 单元测试：本机内网 IP 枚举会过滤 loopback、link-local、公网地址和明显无效地址，并保留多网卡有效内网地址。

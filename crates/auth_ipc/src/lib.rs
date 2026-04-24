@@ -68,12 +68,21 @@ pub enum IpcResponsePayload {
     SessionState(SessionStateResponse),
 }
 
+/// helper 下发给 CP 的单个手机号选择项。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PhoneChoiceSnapshot {
+    pub id: String,
+    pub masked: String,
+}
+
 /// helper 下发给 CP 的脱敏策略快照。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PolicySnapshot {
     pub auth_methods: Vec<AuthMethod>,
     pub phone_source: PhoneInputSource,
     pub masked_phone: Option<String>,
+    #[serde(default)]
+    pub phone_choices: Vec<PhoneChoiceSnapshot>,
     pub phone_editable: bool,
     pub mfa_timeout_seconds: u64,
     pub sms_resend_seconds: u32,
@@ -144,8 +153,8 @@ impl IpcResponse {
 #[cfg(test)]
 mod tests {
     use super::{
-        IpcRequest, IpcResponse, IpcResponsePayload, PhoneInputSource, PolicySnapshot,
-        SessionStateResponse,
+        IpcRequest, IpcResponse, IpcResponsePayload, PhoneChoiceSnapshot, PhoneInputSource,
+        PolicySnapshot, SessionStateResponse,
     };
     use auth_core::AuthMethod;
 
@@ -171,6 +180,16 @@ mod tests {
                 auth_methods: vec![AuthMethod::PhoneCode, AuthMethod::SecondPassword],
                 phone_source: PhoneInputSource::Configured,
                 masked_phone: Some("138****8888".to_owned()),
+                phone_choices: vec![
+                    PhoneChoiceSnapshot {
+                        id: "phone-0".to_owned(),
+                        masked: "138****8888".to_owned(),
+                    },
+                    PhoneChoiceSnapshot {
+                        id: "phone-1".to_owned(),
+                        masked: "139****9999".to_owned(),
+                    },
+                ],
                 phone_editable: false,
                 mfa_timeout_seconds: 120,
                 sms_resend_seconds: 60,
@@ -179,6 +198,7 @@ mod tests {
         let json = response.to_json().unwrap();
 
         assert!(json.contains("138****8888"));
+        assert!(json.contains("phone-0"));
         assert!(!json.contains("13812348888"));
         assert_eq!(IpcResponse::from_json(&json).unwrap(), response);
     }

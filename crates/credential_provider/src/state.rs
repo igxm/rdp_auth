@@ -311,6 +311,10 @@ mod tests {
             auth_methods: vec![AuthMethod::PhoneCode],
             phone_source: PhoneInputSource::Configured,
             masked_phone: Some("138****8888".to_owned()),
+            phone_choices: vec![auth_ipc::PhoneChoiceSnapshot {
+                id: "phone-0".to_owned(),
+                masked: "138****8888".to_owned(),
+            }],
             phone_editable: false,
             mfa_timeout_seconds: 90,
             sms_resend_seconds: 45,
@@ -333,6 +337,7 @@ mod tests {
             auth_methods: vec![AuthMethod::SecondPassword],
             phone_source: PhoneInputSource::ManualInput,
             masked_phone: None,
+            phone_choices: Vec::new(),
             phone_editable: true,
             mfa_timeout_seconds: 120,
             sms_resend_seconds: 60,
