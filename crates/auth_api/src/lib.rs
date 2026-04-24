@@ -225,7 +225,10 @@ impl AuthApiClient {
             });
         }
         let response = self
-            .post_json(VERIFY_SECOND_PASSWORD_PATH, &VerifySecondPasswordRequest { password })?
+            .post_json(
+                VERIFY_SECOND_PASSWORD_PATH,
+                &VerifySecondPasswordRequest { password },
+            )?
             .json::<BasicResponseEnvelope>()
             .map_err(|_| ApiError::ResponseParse)?;
 
