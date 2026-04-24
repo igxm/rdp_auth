@@ -34,8 +34,8 @@
 
 ### P0：真实短信 challenge 链路
 
-- [ ] helper `send_sms` 接入 `AuthApiClient::send_sms_code`，使用真实手机号换取 `SmsChallenge`
-- [ ] helper challenge 状态从 mock token 切换为真实 `challenge_token`
+- [x] helper `send_sms` 已接入 `AuthApiClient::send_sms_code` 形状，使用真实手机号换取 `SmsChallenge`
+- [x] helper challenge 状态已支持从 mock token 切换为真实 `challenge_token`
 - [x] `verify_sms` 优先走 `challenge_token + code`
 - [ ] challenge 过期、手机号切换、快照版本变化时 fail closed
 - [ ] `challenge_token` 不进入 IPC、CP 状态、日志、错误文本、策略快照或落盘
