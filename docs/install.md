@@ -137,7 +137,7 @@ Get-Content C:\ProgramData\rdp_auth\logs\credential_provider.log -Tail 80
 5. 使用 mock 数据验证放行：手机验证码方式输入任意非空手机号和验证码 `123456`，或二次密码方式输入 `mock-password`，点击登录后应继续进入桌面。
 6. 使用错误验证码或错误二次密码验证阻断：应停留在当前 Tile，不应进入桌面。
 7. 点击取消应断开当前 RDP 连接。
-8. 在 RDP 二次认证 Tile 停留超过默认 2 分钟且不完成认证，应自动断开当前 RDP 连接；首次点击发送短信验证码后，等待窗口应重置为 5 分钟，后续重发不再延长该窗口。为了缩短测试时间，可临时调小 `mfa.timeout_seconds` 验证默认超时路径。
+8. 在 RDP 二次认证 Tile 停留超过默认 2 分钟且不完成认证，应自动断开当前 RDP 连接；首次点击发送短信验证码并成功后，等待窗口应重置为 5 分钟，后续重发不再延长该窗口。若当前仍缺失 inbound serialization，则该保护窗口也应同步延长到 5 分钟，但即使如此仍不能绕过 inbound serialization 的 fail closed 条件。为了缩短测试时间，可临时调小 `mfa.timeout_seconds` 验证默认超时路径。
 9. 登录后锁屏或注销返回登录界面时，如果没有新的 RDP/NLA inbound serialization，应在约 1 秒后断开当前 RDP 连接；用户重新连接后会重新提供 Windows 一次凭证。
 10. 登录后再次执行 `register_tool.exe health`，确认注册表入口、DLL 路径和三项策略仍符合预期。
 

@@ -171,6 +171,7 @@
 - [x] 实现短信验证码重新发送倒计时递减，并在 60 秒后恢复为可点击 `发送验证码`。（当前通过 LogonUI events 只刷新发送短信按钮；后续接入 helper 后可改为 helper 心跳驱动）
 - [x] 增加认证超时断开机制：收到 RDP inbound serialization 后启动默认 2 分钟的一次性定时器，超时仍未完成二次认证时自动断开当前 RDP 会话。
 - [x] 首次点击发送短信验证码后，当前二次认证页面等待窗口重置为 5 分钟，并让旧超时定时器自动失效；后续重发短信不再刷新该超时。
+- [x] 首次点击发送短信验证码并成功后，如当前仍处于缺失 inbound serialization 的等待窗口，则同步把该断开等待窗口重置为 5 分钟；即使等待窗口延长，`GetSerialization` 仍必须在 inbound serialization 存在时才允许放行。
 - [x] 认证超时断开时间后续改为从统一配置文件读取，缺失时默认 120 秒。
 - [x] 设计 `MfaState` 状态机：空闲、发送短信中、等待输入、认证中、成功、失败。
 - [x] 使用 mock 数据模拟认证通过情况：手机验证码 `123456`、二次密码 `mock-password`。
@@ -220,6 +221,7 @@
 - [x] 第一版 helper 先返回 mock 结果，用固定验证码验证主链路。
 - [ ] Credential Provider 通过命名管道调用 helper。
 - [ ] 增加超时处理，避免 LogonUI 长时间无响应。
+- [x] CP 诊断日志补齐发送短信、超时重置、timer stale 和断开原因，便于定位“短信未到先断开”类问题。
 - [x] helper 使用 `tracing` 输出结构化诊断日志，记录 helper 启动、请求类型、session、结果和 payload 状态；request_id、耗时和认证方式随审计上下文补齐。
 - [x] helper 使用 `anyhow` 作为入口层错误返回，IPC 协议错误使用 `thiserror` 定义可匹配类型；业务错误类型后续随真实 API 接入补齐。
 - [x] 中文注释解释为何 CP DLL 不直接发网络请求。
@@ -382,6 +384,7 @@
 - [x] 单元测试：`register_tool config import/export` 覆盖 CLI 解析、明文 TOML 归一化、非法 TOML 拒绝和加密配置备份命名；真实导入/导出仍需在安装环境做集成验证。
 - [ ] 单元测试：缺失 serialization 保护 generation 变化后旧定时器不会断开新登录尝试。
 - [ ] 单元测试：短信倒计时 generation 变化后旧刷新线程不会覆盖新倒计时。
+- [ ] 单元测试：MFA 超时 generation 与缺失 serialization generation 相互独立，首次短信发送成功后两类等待窗口都会被重置为 300 秒，旧定时器不会互相覆盖。
 - [x] 单元测试：helper `SessionAuthState` 标记、查询、TTL 过期和清理逻辑。
 - [x] 单元测试：helper 收到 logoff/disconnect/session end 事件后清理对应 session 状态。
 - [x] 单元测试：`mark_session_authenticated`、`has_authenticated_session`、`clear_session_state` IPC 请求响应序列化。

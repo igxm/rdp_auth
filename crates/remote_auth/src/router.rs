@@ -18,6 +18,7 @@ pub fn handle_request(
 ) -> IpcResponse {
     let request_kind = request_kind(&request);
     let session_id = request_session_id(&request);
+    let phone_choice_id = request_phone_choice_id(&request).map(str::to_owned);
     let response = match request {
         IpcRequest::GetPolicySnapshot { .. } => IpcResponse::success_with_payload(
             "策略已加载",
@@ -67,12 +68,25 @@ pub fn handle_request(
         event = "ipc_request_handled",
         request = request_kind,
         session_id,
+        phone_choice_id = phone_choice_id.as_deref().unwrap_or("-"),
         ok = response.ok,
         has_payload = response.payload.is_some(),
         message = %crate::diagnostics::sanitize_log_value(&response.message),
         "helper IPC 请求已处理"
     );
     response
+}
+
+fn request_phone_choice_id(request: &IpcRequest) -> Option<&str> {
+    match request {
+        IpcRequest::SendSms {
+            phone_choice_id, ..
+        }
+        | IpcRequest::VerifySms {
+            phone_choice_id, ..
+        } => Some(phone_choice_id.as_str()),
+        _ => None,
+    }
 }
 
 fn request_kind(request: &IpcRequest) -> &'static str {

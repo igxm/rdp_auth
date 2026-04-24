@@ -1,8 +1,10 @@
 //! helper 侧 MFA mock 处理。
 //!
 //! 真实 API 接入前，helper 先提供和 Credential Provider 当前 mock 行为一致的验证语义。
-//! 手机号只能来自 helper 解密后的配置，CP 和 IPC 都不再携带真实手机号。
+//! 手机号只允许来自 helper 解密后的配置；CP 和 IPC 都不再携带完整手机号。
+
 use auth_ipc::IpcResponse;
+use tracing::info;
 
 use crate::policy::PolicyContext;
 
@@ -10,19 +12,71 @@ const MOCK_SMS_CODE: &str = "123456";
 const MOCK_SECOND_PASSWORD: &str = "mock-password";
 
 pub fn handle_send_sms(phone_choice_id: &str, policy: &PolicyContext) -> IpcResponse {
+    info!(
+        target: "remote_auth",
+        event = "send_sms_requested",
+        phone_choice_id,
+        "helper 收到发送短信请求"
+    );
+
     match resolve_configured_phone(phone_choice_id, policy) {
-        Ok(_) => IpcResponse::success("验证码已发送"),
-        Err(message) => IpcResponse::failure(message),
+        Ok(_) => {
+            info!(
+                target: "remote_auth",
+                event = "send_sms_resolved_choice",
+                phone_choice_id,
+                "helper 已解析手机号选择"
+            );
+            IpcResponse::success("验证码已发送")
+        }
+        Err(message) => {
+            info!(
+                target: "remote_auth",
+                event = "send_sms_rejected_choice",
+                phone_choice_id,
+                reason = %crate::diagnostics::sanitize_log_value(message),
+                "helper 拒绝发送短信请求"
+            );
+            IpcResponse::failure(message)
+        }
     }
 }
 
 pub fn handle_verify_sms(phone_choice_id: &str, code: &str, policy: &PolicyContext) -> IpcResponse {
+    info!(
+        target: "remote_auth",
+        event = "verify_sms_requested",
+        phone_choice_id,
+        code_len = code.chars().count(),
+        "helper 收到短信验证码校验请求"
+    );
+
     if let Err(message) = resolve_configured_phone(phone_choice_id, policy) {
+        info!(
+            target: "remote_auth",
+            event = "verify_sms_rejected_choice",
+            phone_choice_id,
+            reason = %crate::diagnostics::sanitize_log_value(message),
+            "helper 拒绝短信验证码校验请求"
+        );
         return IpcResponse::failure(message);
     }
+
     if code.trim() == MOCK_SMS_CODE {
+        info!(
+            target: "remote_auth",
+            event = "verify_sms_passed",
+            phone_choice_id,
+            "helper 短信验证码校验通过"
+        );
         IpcResponse::success("短信验证码验证通过")
     } else {
+        info!(
+            target: "remote_auth",
+            event = "verify_sms_failed",
+            phone_choice_id,
+            "helper 短信验证码校验失败"
+        );
         IpcResponse::failure("短信验证码错误")
     }
 }
@@ -39,7 +93,7 @@ fn resolve_configured_phone(
     phone_choice_id: &str,
     policy: &PolicyContext,
 ) -> Result<String, &'static str> {
-    // helper 只接受非敏感选择 ID，不接受完整手机号。这样即使 CP/UI 未来支持多号码选择，
+    // helper 只接受非敏感选择 ID，不接受完整手机号。这样即使 CP/UI 支持多号码选择，
     // 真实手机号也不会跨出 helper 进程边界。
     policy
         .configured_phones
@@ -54,6 +108,7 @@ mod tests {
     use super::{handle_send_sms, handle_verify_second_password, handle_verify_sms};
     use crate::policy::policy_context_from_config;
     use auth_config::{AppConfig, PhoneConfig, PhoneSource};
+
     #[test]
     fn send_sms_requires_configured_phone() {
         let policy = policy_context_from_config(&AppConfig::default());

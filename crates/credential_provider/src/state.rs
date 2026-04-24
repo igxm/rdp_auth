@@ -199,7 +199,12 @@ pub struct CredentialProviderState {
     /// 无 inbound serialization 时是否断开 RDP。安全默认值为启用。
     pub disconnect_when_missing_serialization: bool,
     /// 超时定时器 generation。每次新的 RDP serialization 都递增，旧定时器醒来后据此自退。
-    pub timeout_generation: u64,
+    /// MFA 超时定时器 generation。新的 inbound serialization 或首次短信发送成功后只重置这一路，
+    /// 避免与缺失 serialization 断开计时共用计数器时互相覆盖。
+    pub mfa_timeout_generation: u64,
+    /// 缺失 inbound serialization 的断开定时器 generation。该计时器只服务于“当前 Tile 是否仍然
+    /// 缺少可放行的原始凭证”判断，和 MFA 页面等待窗口分开维护，便于分别重置与排障。
+    pub missing_serialization_generation: u64,
 }
 
 impl Default for CredentialProviderState {
@@ -235,7 +240,8 @@ impl Default for CredentialProviderState {
             sms_resend_seconds: mfa_config.sms_resend_seconds,
             helper_ipc_timeout_ms: mfa_config.helper_ipc_timeout_ms,
             disconnect_when_missing_serialization: mfa_config.disconnect_when_missing_serialization,
-            timeout_generation: 0,
+            mfa_timeout_generation: 0,
+            missing_serialization_generation: 0,
         }
     }
 }
@@ -346,7 +352,8 @@ mod tests {
         assert_eq!(state.sms_resend_seconds, 60);
         assert_eq!(state.helper_ipc_timeout_ms, 300);
         assert!(state.disconnect_when_missing_serialization);
-        assert_eq!(state.timeout_generation, 0);
+        assert_eq!(state.mfa_timeout_generation, 0);
+        assert_eq!(state.missing_serialization_generation, 0);
         assert_eq!(state.sms_resend_generation, 0);
         assert!(!state.sms_sent_timeout_extended);
         assert!(!state.phone_editable);

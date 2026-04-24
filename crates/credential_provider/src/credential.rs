@@ -29,7 +29,10 @@ use crate::helper_client::{
 use crate::memory::alloc_wide_string;
 use crate::session::disconnect_current_session;
 use crate::state::{CredentialProviderState, RDP_MFA_PROVIDER_CLSID};
-use crate::timeout::start_mfa_timeout_timer_with_timeout;
+use crate::timeout::{
+    restart_missing_serialization_disconnect_timer_with_timeout,
+    start_mfa_timeout_timer_with_timeout,
+};
 
 const MOCK_SMS_CODE: &str = "123456";
 const MOCK_SECOND_PASSWORD: &str = "mock-password";
@@ -488,6 +491,10 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
                     // 首次发送验证码后用户需要等待短信到达并输入验证码，因此只在这一刻把当前
                     // MFA 页面等待窗口延长为 5 分钟。后续重发不再刷新 generation，避免无限拖住 LogonUI。
                     start_mfa_timeout_timer_with_timeout(
+                        Arc::clone(&self.state),
+                        SMS_SENT_MFA_TIMEOUT_SECONDS,
+                    );
+                    restart_missing_serialization_disconnect_timer_with_timeout(
                         Arc::clone(&self.state),
                         SMS_SENT_MFA_TIMEOUT_SECONDS,
                     );
