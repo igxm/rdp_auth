@@ -493,6 +493,7 @@ name = "remote_auth"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "auth_api",
  "auth_config",
  "auth_core",
  "auth_ipc",

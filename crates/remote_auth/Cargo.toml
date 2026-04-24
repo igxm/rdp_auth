@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+auth_api = { path = "../auth_api" }
 auth_config = { path = "../auth_config" }
 auth_core = { path = "../auth_core" }
 auth_ipc = { path = "../auth_ipc" }

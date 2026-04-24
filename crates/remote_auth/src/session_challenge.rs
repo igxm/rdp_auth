@@ -51,21 +51,40 @@ impl SmsChallengeState {
         phone_choices_version: &str,
         now: Instant,
     ) -> Duration {
-        self.prune_expired(now);
         let token = self.next_mock_token(session_id);
+        self.issue_challenge(
+            session_id,
+            phone_choice_id,
+            phone_choices_version,
+            token,
+            self.ttl,
+            now,
+        )
+    }
+
+    pub fn issue_challenge(
+        &mut self,
+        session_id: u32,
+        phone_choice_id: &str,
+        phone_choices_version: &str,
+        challenge_token: String,
+        ttl: Duration,
+        now: Instant,
+    ) -> Duration {
+        self.prune_expired(now);
         self.records.insert(
             session_id,
             SmsChallengeRecord {
                 session_id,
                 phone_choice_id: phone_choice_id.to_owned(),
                 phone_choices_version: phone_choices_version.to_owned(),
-                challenge_token: token,
+                challenge_token,
                 issued_at: now,
-                ttl: self.ttl,
+                ttl,
                 status: SmsChallengeStatus::Pending,
             },
         );
-        self.ttl
+        ttl
     }
 
     pub fn verify_pending_challenge(
@@ -107,6 +126,23 @@ impl SmsChallengeState {
             .ok_or(VerifyChallengeError::Missing)?;
         record.status = SmsChallengeStatus::Verified;
         Ok(())
+    }
+
+    pub fn pending_challenge_token(
+        &mut self,
+        session_id: u32,
+        phone_choice_id: &str,
+        phone_choices_version: &str,
+        now: Instant,
+    ) -> Result<String, VerifyChallengeError> {
+        // verify_sms 必须先复用同一份 pending challenge 校验 choice/version/session 边界，
+        // 再把 challenge_token 留在 helper 内存里继续发给后端；这样 token 不会回流到 IPC/CP。
+        self.verify_pending_challenge(session_id, phone_choice_id, phone_choices_version, now)?;
+        let record = self
+            .records
+            .get(&session_id)
+            .ok_or(VerifyChallengeError::Missing)?;
+        Ok(record.challenge_token.clone())
     }
 
     pub fn clear_session(&mut self, session_id: u32) {
@@ -173,6 +209,10 @@ mod tests {
         assert_eq!(
             state.verify_pending_challenge(7, "phone-0", "choices-v1", now),
             Ok(())
+        );
+        assert_eq!(
+            state.pending_challenge_token(7, "phone-0", "choices-v1", now),
+            Ok("mock-challenge-7-1".to_owned())
         );
     }
 
@@ -250,5 +290,27 @@ mod tests {
         state.clear_session(7);
 
         assert_eq!(state.status(7, now), None);
+    }
+
+    #[test]
+    fn issue_real_challenge_preserves_service_token() {
+        let now = Instant::now();
+        let mut state = SmsChallengeState::new(Duration::from_secs(120));
+
+        let ttl = state.issue_challenge(
+            7,
+            "phone-0",
+            "choices-v1",
+            "opaque-service-token".to_owned(),
+            Duration::from_secs(300),
+            now,
+        );
+
+        assert_eq!(ttl, Duration::from_secs(300));
+        assert_eq!(
+            state.pending_challenge_token(7, "phone-0", "choices-v1", now),
+            Ok("opaque-service-token".to_owned())
+        );
+        assert_eq!(state.ttl_remaining(7, now), Some(Duration::from_secs(300)));
     }
 }

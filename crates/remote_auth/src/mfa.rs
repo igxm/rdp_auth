@@ -1,17 +1,29 @@
-//! helper 侧 MFA mock 处理。
+//! helper 侧 MFA 处理。
 //!
-//! 真实 API 接入前，helper 先提供和 Credential Provider 当前 mock 行为一致的验证语义。
-//! 手机号只允许来自 helper 解密后的配置；CP 和 IPC 都不再携带完整手机号。
+//! 手机号只允许来自 helper 解密后的配置，CP 和 IPC 都不再携带完整手机号。
+//! 真实短信校验改为 challenge_token + code 后，challenge_token 只留在 helper 内存里，
+//! verify_sms 阶段只把 token 继续发往后端，不再把手机号重新传回服务端。
+use std::time::Instant;
 
+use auth_api::{AuthApiClient, Error as AuthApiError};
 use auth_ipc::IpcResponse;
 use tracing::info;
 
 use crate::policy::PolicyContext;
 use crate::session_challenge::{SmsChallengeState, VerifyChallengeError};
-use std::time::Instant;
 
 const MOCK_SMS_CODE: &str = "123456";
 const MOCK_SECOND_PASSWORD: &str = "mock-password";
+
+trait SmsVerifyApi {
+    fn verify_sms_code(&self, challenge_token: &str, code: &str) -> Result<(), AuthApiError>;
+}
+
+impl SmsVerifyApi for AuthApiClient {
+    fn verify_sms_code(&self, challenge_token: &str, code: &str) -> Result<(), AuthApiError> {
+        AuthApiClient::verify_sms_code(self, challenge_token, code)
+    }
+}
 
 pub fn handle_send_sms(
     session_id: u32,
@@ -86,6 +98,44 @@ pub fn handle_verify_sms(
     sms_challenges: &mut SmsChallengeState,
     now: Instant,
 ) -> IpcResponse {
+    let config = auth_config::load_app_config();
+    let api_client = match AuthApiClient::new(config.api.clone()) {
+        Ok(client) => Some(client),
+        Err(error) => {
+            info!(
+                target: "remote_auth",
+                event = "verify_sms_api_client_invalid",
+                session_id,
+                phone_choice_id,
+                phone_choices_version,
+                reason = error.diagnostic_code(),
+                "helper 无法初始化短信验证 API 客户端"
+            );
+            None
+        }
+    };
+    handle_verify_sms_with_api(
+        session_id,
+        phone_choice_id,
+        phone_choices_version,
+        code,
+        policy,
+        sms_challenges,
+        now,
+        api_client.as_ref(),
+    )
+}
+
+fn handle_verify_sms_with_api(
+    session_id: u32,
+    phone_choice_id: &str,
+    phone_choices_version: &str,
+    code: &str,
+    policy: &PolicyContext,
+    sms_challenges: &mut SmsChallengeState,
+    now: Instant,
+    api: Option<&impl SmsVerifyApi>,
+) -> IpcResponse {
     info!(
         target: "remote_auth",
         event = "verify_sms_requested",
@@ -122,46 +172,85 @@ pub fn handle_verify_sms(
         return IpcResponse::failure(message);
     }
 
-    if let Err(error) = sms_challenges.verify_pending_challenge(
+    let challenge_token = match sms_challenges.pending_challenge_token(
         session_id,
         phone_choice_id,
         phone_choices_version,
         now,
     ) {
-        let message = challenge_error_message(error);
-        info!(
-            target: "remote_auth",
-            event = "verify_sms_rejected_challenge",
-            session_id,
-            phone_choice_id,
-            phone_choices_version,
-            reason = %crate::diagnostics::sanitize_log_value(message),
-            "helper 拒绝短信验证码校验请求"
-        );
-        return IpcResponse::failure(message);
-    }
+        Ok(challenge_token) => challenge_token,
+        Err(error) => {
+            let message = challenge_error_message(error);
+            info!(
+                target: "remote_auth",
+                event = "verify_sms_rejected_challenge",
+                session_id,
+                phone_choice_id,
+                phone_choices_version,
+                reason = %crate::diagnostics::sanitize_log_value(message),
+                "helper 拒绝短信验证码校验请求"
+            );
+            return IpcResponse::failure(message);
+        }
+    };
 
-    if code.trim() == MOCK_SMS_CODE {
-        let _ = sms_challenges.mark_verified(session_id, now);
-        info!(
-            target: "remote_auth",
-            event = "verify_sms_passed",
-            session_id,
-            phone_choice_id,
-            phone_choices_version,
-            "helper 短信验证码校验通过"
-        );
-        IpcResponse::success("短信验证码验证通过")
-    } else {
-        info!(
-            target: "remote_auth",
-            event = "verify_sms_failed",
-            session_id,
-            phone_choice_id,
-            phone_choices_version,
-            "helper 短信验证码校验失败"
-        );
-        IpcResponse::failure("短信验证码错误")
+    match api {
+        Some(api) => match api.verify_sms_code(&challenge_token, code) {
+            Ok(()) => {
+                let _ = sms_challenges.mark_verified(session_id, now);
+                info!(
+                    target: "remote_auth",
+                    event = "verify_sms_passed",
+                    session_id,
+                    phone_choice_id,
+                    phone_choices_version,
+                    verify_mode = "challenge_token",
+                    "helper 短信验证码校验通过"
+                );
+                IpcResponse::success("短信验证码验证通过")
+            }
+            Err(AuthApiError::NotImplemented { .. }) if code.trim() == MOCK_SMS_CODE => {
+                // 在真实 verify 接口尚未接入前，只允许明确的 NotImplemented 回退到现有 mock 语义，
+                // 这样可以先验证 challenge_token + code 的 helper 边界，而不会把网络故障误判成验证码成功。
+                let _ = sms_challenges.mark_verified(session_id, now);
+                info!(
+                    target: "remote_auth",
+                    event = "verify_sms_passed",
+                    session_id,
+                    phone_choice_id,
+                    phone_choices_version,
+                    verify_mode = "mock_fallback",
+                    "helper 短信验证码校验通过"
+                );
+                IpcResponse::success("短信验证码验证通过")
+            }
+            Err(error) => {
+                info!(
+                    target: "remote_auth",
+                    event = "verify_sms_failed",
+                    session_id,
+                    phone_choice_id,
+                    phone_choices_version,
+                    verify_mode = "challenge_token",
+                    reason = error.diagnostic_code(),
+                    "helper 短信验证码校验失败"
+                );
+                IpcResponse::failure(error.user_message())
+            }
+        },
+        None => {
+            info!(
+                target: "remote_auth",
+                event = "verify_sms_failed",
+                session_id,
+                phone_choice_id,
+                phone_choices_version,
+                verify_mode = "challenge_token",
+                reason = "api_client_unavailable",
+                "helper 短信验证码校验失败"
+            );
+            IpcResponse::failure("认证服务配置无效，请联系管理员")
+        }
     }
 }
 
@@ -212,11 +301,54 @@ fn validate_phone_choices_version(
 
 #[cfg(test)]
 mod tests {
-    use super::{handle_send_sms, handle_verify_second_password, handle_verify_sms};
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    use auth_api::ApiError;
+    use auth_config::{AppConfig, PhoneConfig, PhoneSource};
+
+    use super::{
+        MOCK_SMS_CODE, SmsVerifyApi, handle_send_sms, handle_verify_second_password,
+        handle_verify_sms_with_api,
+    };
     use crate::policy::policy_context_from_config;
     use crate::session_challenge::SmsChallengeState;
-    use auth_config::{AppConfig, PhoneConfig, PhoneSource};
-    use std::time::{Duration, Instant};
+
+    #[derive(Clone)]
+    struct FakeVerifyApi {
+        calls: Arc<Mutex<Vec<(String, String)>>>,
+        result: Result<(), ApiError>,
+    }
+
+    impl FakeVerifyApi {
+        fn success() -> Self {
+            Self {
+                calls: Arc::new(Mutex::new(Vec::new())),
+                result: Ok(()),
+            }
+        }
+
+        fn reject(result: ApiError) -> Self {
+            Self {
+                calls: Arc::new(Mutex::new(Vec::new())),
+                result: Err(result),
+            }
+        }
+
+        fn calls(&self) -> Vec<(String, String)> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl SmsVerifyApi for FakeVerifyApi {
+        fn verify_sms_code(&self, challenge_token: &str, code: &str) -> Result<(), ApiError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((challenge_token.to_owned(), code.to_owned()));
+            self.result.clone()
+        }
+    }
 
     #[test]
     fn send_sms_requires_configured_phone() {
@@ -262,7 +394,7 @@ mod tests {
     }
 
     #[test]
-    fn verify_sms_uses_mock_code() {
+    fn verify_sms_uses_challenge_token_api() {
         let config = AppConfig {
             phone: PhoneConfig {
                 source: PhoneSource::Config,
@@ -274,6 +406,7 @@ mod tests {
         let policy = policy_context_from_config(&config);
         let now = Instant::now();
         let mut sms_challenges = SmsChallengeState::new(Duration::from_secs(120));
+        let api = FakeVerifyApi::success();
 
         assert!(
             handle_send_sms(
@@ -287,19 +420,27 @@ mod tests {
             .ok
         );
         assert!(
-            handle_verify_sms(
+            handle_verify_sms_with_api(
                 7,
                 "phone-0",
                 &policy.snapshot.phone_choices_version,
-                "123456",
+                MOCK_SMS_CODE,
                 &policy,
                 &mut sms_challenges,
                 now,
+                Some(&api),
             )
             .ok
+        );
+        assert_eq!(
+            api.calls(),
+            vec![("mock-challenge-7-1".to_owned(), MOCK_SMS_CODE.to_owned())]
         );
 
         let mut sms_challenges = SmsChallengeState::new(Duration::from_secs(120));
+        let api = FakeVerifyApi::reject(ApiError::ServerRejected {
+            code: "bad_code".to_owned(),
+        });
         assert!(
             handle_send_sms(
                 7,
@@ -312,7 +453,7 @@ mod tests {
             .ok
         );
         assert!(
-            !handle_verify_sms(
+            !handle_verify_sms_with_api(
                 7,
                 "phone-0",
                 &policy.snapshot.phone_choices_version,
@@ -320,6 +461,7 @@ mod tests {
                 &policy,
                 &mut sms_challenges,
                 now,
+                Some(&api),
             )
             .ok
         );
@@ -364,14 +506,15 @@ mod tests {
         let policy = policy_context_from_config(&config);
         let mut sms_challenges = SmsChallengeState::new(Duration::from_secs(120));
 
-        let response = handle_verify_sms(
+        let response = handle_verify_sms_with_api(
             7,
             "phone-0",
             &policy.snapshot.phone_choices_version,
-            "123456",
+            MOCK_SMS_CODE,
             &policy,
             &mut sms_challenges,
             Instant::now(),
+            Some(&FakeVerifyApi::success()),
         );
 
         assert!(!response.ok);
@@ -404,14 +547,15 @@ mod tests {
             .ok
         );
 
-        let response = handle_verify_sms(
+        let response = handle_verify_sms_with_api(
             7,
             "phone-1",
             &policy.snapshot.phone_choices_version,
-            "123456",
+            MOCK_SMS_CODE,
             &policy,
             &mut sms_challenges,
             now,
+            Some(&FakeVerifyApi::success()),
         );
 
         assert!(!response.ok);
@@ -444,14 +588,15 @@ mod tests {
             .ok
         );
 
-        let response = handle_verify_sms(
+        let response = handle_verify_sms_with_api(
             7,
             "phone-0",
             "choices-stale",
-            "123456",
+            MOCK_SMS_CODE,
             &policy,
             &mut sms_challenges,
             now,
+            Some(&FakeVerifyApi::success()),
         );
 
         assert!(!response.ok);
@@ -462,5 +607,91 @@ mod tests {
     fn verify_second_password_uses_mock_password() {
         assert!(handle_verify_second_password("mock-password").ok);
         assert!(!handle_verify_second_password("wrong").ok);
+    }
+
+    #[test]
+    fn verify_sms_maps_api_errors_to_safe_message() {
+        let config = AppConfig {
+            phone: PhoneConfig {
+                source: PhoneSource::Config,
+                number: "13812348888".to_owned(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let policy = policy_context_from_config(&config);
+        let now = Instant::now();
+        let mut sms_challenges = SmsChallengeState::new(Duration::from_secs(120));
+        let api = FakeVerifyApi::reject(ApiError::HttpStatus { status: 503 });
+
+        assert!(
+            handle_send_sms(
+                7,
+                "phone-0",
+                &policy.snapshot.phone_choices_version,
+                &policy,
+                &mut sms_challenges,
+                now,
+            )
+            .ok
+        );
+
+        let response = handle_verify_sms_with_api(
+            7,
+            "phone-0",
+            &policy.snapshot.phone_choices_version,
+            MOCK_SMS_CODE,
+            &policy,
+            &mut sms_challenges,
+            now,
+            Some(&api),
+        );
+
+        assert!(!response.ok);
+        assert_eq!(
+            response.message,
+            "认证服务暂时不可用，请稍后重试或联系管理员"
+        );
+    }
+
+    #[test]
+    fn verify_sms_rejects_missing_api_client() {
+        let config = AppConfig {
+            phone: PhoneConfig {
+                source: PhoneSource::Config,
+                number: "13812348888".to_owned(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let policy = policy_context_from_config(&config);
+        let now = Instant::now();
+        let mut sms_challenges = SmsChallengeState::new(Duration::from_secs(120));
+
+        assert!(
+            handle_send_sms(
+                7,
+                "phone-0",
+                &policy.snapshot.phone_choices_version,
+                &policy,
+                &mut sms_challenges,
+                now,
+            )
+            .ok
+        );
+
+        let response = handle_verify_sms_with_api(
+            7,
+            "phone-0",
+            &policy.snapshot.phone_choices_version,
+            MOCK_SMS_CODE,
+            &policy,
+            &mut sms_challenges,
+            now,
+            None::<&FakeVerifyApi>,
+        );
+
+        assert!(!response.ok);
+        assert_eq!(response.message, "认证服务配置无效，请联系管理员");
     }
 }
