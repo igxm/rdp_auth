@@ -21,6 +21,7 @@ pub fn handle_request(
     let request_kind = request_kind(&request);
     let session_id = request_session_id(&request);
     let phone_choice_id = request_phone_choice_id(&request).map(str::to_owned);
+    let phone_choices_version = request_phone_choices_version(&request).map(str::to_owned);
     let response = match request {
         IpcRequest::GetPolicySnapshot { .. } => IpcResponse::success_with_payload(
             "策略已加载",
@@ -52,17 +53,25 @@ pub fn handle_request(
         IpcRequest::SendSms {
             session_id,
             phone_choice_id,
-        } => {
-            crate::mfa::handle_send_sms(session_id, &phone_choice_id, &policy, sms_challenges, now)
-        }
+            phone_choices_version,
+        } => crate::mfa::handle_send_sms(
+            session_id,
+            &phone_choice_id,
+            &phone_choices_version,
+            &policy,
+            sms_challenges,
+            now,
+        ),
         IpcRequest::VerifySms {
             session_id,
             phone_choice_id,
+            phone_choices_version,
             code,
             ..
         } => crate::mfa::handle_verify_sms(
             session_id,
             &phone_choice_id,
+            &phone_choices_version,
             &code,
             &policy,
             sms_challenges,
@@ -83,6 +92,7 @@ pub fn handle_request(
         request = request_kind,
         session_id,
         phone_choice_id = phone_choice_id.as_deref().unwrap_or("-"),
+        phone_choices_version = phone_choices_version.as_deref().unwrap_or("-"),
         ok = response.ok,
         has_payload = response.payload.is_some(),
         message = %crate::diagnostics::sanitize_log_value(&response.message),
@@ -99,6 +109,20 @@ fn request_phone_choice_id(request: &IpcRequest) -> Option<&str> {
         | IpcRequest::VerifySms {
             phone_choice_id, ..
         } => Some(phone_choice_id.as_str()),
+        _ => None,
+    }
+}
+
+fn request_phone_choices_version(request: &IpcRequest) -> Option<&str> {
+    match request {
+        IpcRequest::SendSms {
+            phone_choices_version,
+            ..
+        }
+        | IpcRequest::VerifySms {
+            phone_choices_version,
+            ..
+        } => Some(phone_choices_version.as_str()),
         _ => None,
     }
 }
@@ -273,6 +297,7 @@ mod tests {
             IpcRequest::SendSms {
                 session_id: 7,
                 phone_choice_id: "phone-0".to_owned(),
+                phone_choices_version: policy.snapshot.phone_choices_version.clone(),
             },
             &mut sessions,
             &mut sms_challenges,
@@ -285,6 +310,7 @@ mod tests {
             IpcRequest::VerifySms {
                 session_id: 7,
                 phone_choice_id: "phone-0".to_owned(),
+                phone_choices_version: policy.snapshot.phone_choices_version.clone(),
                 code: "123456".to_owned(),
             },
             &mut sessions,
@@ -325,6 +351,7 @@ mod tests {
             IpcRequest::SendSms {
                 session_id: 7,
                 phone_choice_id: "phone-0".to_owned(),
+                phone_choices_version: policy.snapshot.phone_choices_version.clone(),
             },
             &mut sessions,
             &mut sms_challenges,
@@ -346,6 +373,7 @@ mod tests {
             IpcRequest::VerifySms {
                 session_id: 7,
                 phone_choice_id: "phone-0".to_owned(),
+                phone_choices_version: policy.snapshot.phone_choices_version.clone(),
                 code: "123456".to_owned(),
             },
             &mut sessions,
@@ -355,5 +383,35 @@ mod tests {
         );
         assert!(!verify_sms.ok);
         assert_eq!(verify_sms.message, "验证码已过期，请重新发送");
+    }
+
+    #[test]
+    fn routes_reject_stale_phone_choices_version() {
+        let now = Instant::now();
+        let mut sessions = SessionAuthState::new(Duration::from_secs(60));
+        let mut sms_challenges = SmsChallengeState::new(Duration::from_secs(120));
+        let policy = policy_context_from_config(&AppConfig {
+            phone: PhoneConfig {
+                source: PhoneSource::Config,
+                number: "13812348888".to_owned(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        let response = handle_request(
+            IpcRequest::SendSms {
+                session_id: 7,
+                phone_choice_id: "phone-0".to_owned(),
+                phone_choices_version: "choices-stale".to_owned(),
+            },
+            &mut sessions,
+            &mut sms_challenges,
+            now,
+            policy,
+        );
+
+        assert!(!response.ok);
+        assert_eq!(response.message, "手机号配置已更新，请重新发送验证码");
     }
 }

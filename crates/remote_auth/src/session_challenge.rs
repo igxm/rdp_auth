@@ -22,6 +22,7 @@ pub enum SmsChallengeStatus {
 pub struct SmsChallengeRecord {
     pub session_id: u32,
     pub phone_choice_id: String,
+    pub phone_choices_version: String,
     pub challenge_token: String,
     pub issued_at: Instant,
     pub ttl: Duration,
@@ -47,6 +48,7 @@ impl SmsChallengeState {
         &mut self,
         session_id: u32,
         phone_choice_id: &str,
+        phone_choices_version: &str,
         now: Instant,
     ) -> Duration {
         self.prune_expired(now);
@@ -56,6 +58,7 @@ impl SmsChallengeState {
             SmsChallengeRecord {
                 session_id,
                 phone_choice_id: phone_choice_id.to_owned(),
+                phone_choices_version: phone_choices_version.to_owned(),
                 challenge_token: token,
                 issued_at: now,
                 ttl: self.ttl,
@@ -69,6 +72,7 @@ impl SmsChallengeState {
         &mut self,
         session_id: u32,
         phone_choice_id: &str,
+        phone_choices_version: &str,
         now: Instant,
     ) -> Result<(), VerifyChallengeError> {
         self.prune_expired(now);
@@ -81,6 +85,9 @@ impl SmsChallengeState {
         }
         if record.phone_choice_id != phone_choice_id {
             return Err(VerifyChallengeError::ChoiceChanged);
+        }
+        if record.phone_choices_version != phone_choices_version {
+            return Err(VerifyChallengeError::VersionChanged);
         }
         if record.status != SmsChallengeStatus::Pending {
             return Err(VerifyChallengeError::Missing);
@@ -145,6 +152,7 @@ impl SmsChallengeState {
 pub enum VerifyChallengeError {
     Missing,
     ChoiceChanged,
+    VersionChanged,
 }
 
 #[cfg(test)]
@@ -157,12 +165,15 @@ mod tests {
         let now = Instant::now();
         let mut state = SmsChallengeState::new(Duration::from_secs(120));
 
-        let ttl = state.issue_mock_challenge(7, "phone-0", now);
+        let ttl = state.issue_mock_challenge(7, "phone-0", "choices-v1", now);
 
         assert_eq!(ttl, Duration::from_secs(120));
         assert_eq!(state.status(7, now), Some(SmsChallengeStatus::Pending));
         assert_eq!(state.ttl_remaining(7, now), Some(Duration::from_secs(120)));
-        assert_eq!(state.verify_pending_challenge(7, "phone-0", now), Ok(()));
+        assert_eq!(
+            state.verify_pending_challenge(7, "phone-0", "choices-v1", now),
+            Ok(())
+        );
     }
 
     #[test]
@@ -170,11 +181,24 @@ mod tests {
         let now = Instant::now();
         let mut state = SmsChallengeState::new(Duration::from_secs(120));
 
-        state.issue_mock_challenge(7, "phone-0", now);
+        state.issue_mock_challenge(7, "phone-0", "choices-v1", now);
 
         assert_eq!(
-            state.verify_pending_challenge(7, "phone-1", now),
+            state.verify_pending_challenge(7, "phone-1", "choices-v1", now),
             Err(VerifyChallengeError::ChoiceChanged)
+        );
+    }
+
+    #[test]
+    fn verify_rejects_changed_version() {
+        let now = Instant::now();
+        let mut state = SmsChallengeState::new(Duration::from_secs(120));
+
+        state.issue_mock_challenge(7, "phone-0", "choices-v1", now);
+
+        assert_eq!(
+            state.verify_pending_challenge(7, "phone-0", "choices-v2", now),
+            Err(VerifyChallengeError::VersionChanged)
         );
     }
 
@@ -184,14 +208,19 @@ mod tests {
         let mut state = SmsChallengeState::new(Duration::from_secs(5));
 
         assert_eq!(
-            state.verify_pending_challenge(7, "phone-0", now),
+            state.verify_pending_challenge(7, "phone-0", "choices-v1", now),
             Err(VerifyChallengeError::Missing)
         );
 
-        state.issue_mock_challenge(7, "phone-0", now);
+        state.issue_mock_challenge(7, "phone-0", "choices-v1", now);
 
         assert_eq!(
-            state.verify_pending_challenge(7, "phone-0", now + Duration::from_secs(6)),
+            state.verify_pending_challenge(
+                7,
+                "phone-0",
+                "choices-v1",
+                now + Duration::from_secs(6),
+            ),
             Err(VerifyChallengeError::Missing)
         );
         assert_eq!(state.status(7, now + Duration::from_secs(6)), None);
@@ -202,12 +231,12 @@ mod tests {
         let now = Instant::now();
         let mut state = SmsChallengeState::new(Duration::from_secs(120));
 
-        state.issue_mock_challenge(7, "phone-0", now);
+        state.issue_mock_challenge(7, "phone-0", "choices-v1", now);
         state.mark_verified(7, now).unwrap();
 
         assert_eq!(state.status(7, now), Some(SmsChallengeStatus::Verified));
         assert_eq!(
-            state.verify_pending_challenge(7, "phone-0", now),
+            state.verify_pending_challenge(7, "phone-0", "choices-v1", now),
             Err(VerifyChallengeError::Missing)
         );
     }
@@ -217,7 +246,7 @@ mod tests {
         let now = Instant::now();
         let mut state = SmsChallengeState::new(Duration::from_secs(120));
 
-        state.issue_mock_challenge(7, "phone-0", now);
+        state.issue_mock_challenge(7, "phone-0", "choices-v1", now);
         state.clear_session(7);
 
         assert_eq!(state.status(7, now), None);

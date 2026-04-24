@@ -90,6 +90,7 @@ pub fn get_current_policy_snapshot(timeout: Duration) -> Result<PolicySnapshot, 
 /// CP 只允许把非敏感的 choice id 传给 helper；完整手机号映射必须留在 helper 内部。
 pub fn send_sms_code_for_current_session(
     phone_choice_id: &str,
+    phone_choices_version: &str,
     timeout: Duration,
 ) -> Result<(), HelperClientError> {
     let session_id = current_session_id().map_err(HelperClientError::SessionId)?;
@@ -97,6 +98,7 @@ pub fn send_sms_code_for_current_session(
         IpcRequest::SendSms {
             session_id,
             phone_choice_id: phone_choice_id.to_owned(),
+            phone_choices_version: phone_choices_version.to_owned(),
         },
         timeout,
     )
@@ -298,6 +300,7 @@ mod tests {
                     id: "phone-0".to_owned(),
                     masked: "138****8888".to_owned(),
                 }],
+                phone_choices_version: "choices-v1".to_owned(),
                 phone_editable: false,
                 mfa_timeout_seconds: 90,
                 sms_resend_seconds: 45,
@@ -331,10 +334,12 @@ mod tests {
         let request = IpcRequest::SendSms {
             session_id: 7,
             phone_choice_id: "phone-1".to_owned(),
+            phone_choices_version: "choices-v1".to_owned(),
         };
         let json = request.to_json().unwrap();
 
         assert!(json.contains("phone_choice_id"));
+        assert!(json.contains("phone_choices_version"));
         assert!(json.contains("phone-1"));
         assert!(!json.contains("13912349999"));
     }

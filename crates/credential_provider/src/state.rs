@@ -169,6 +169,11 @@ pub struct CredentialProviderState {
     /// 手机号展示值。Credential Provider 只保存 helper 下发的脱敏值，不再接收手动输入。
     pub phone: String,
     pub phone_choices: Vec<PhoneChoiceView>,
+    /// helper 下发的手机号选择快照版本号。
+    ///
+    /// CP 不理解版本号语义，只负责在后续 `send_sms` / `verify_sms` 请求里原样回传；
+    /// helper 用它判断当前 Tile 里的 choice id 是否仍然对应同一份手机号映射。
+    pub phone_choices_version: String,
     pub selected_phone_choice: usize,
     /// 手机号字段是否允许用户编辑。保留字段用于兼容旧快照，但运行期始终收敛为不可编辑。
     pub phone_editable: bool,
@@ -227,6 +232,7 @@ impl Default for CredentialProviderState {
             available_auth_methods,
             phone: String::new(),
             phone_choices: Vec::new(),
+            phone_choices_version: String::new(),
             selected_phone_choice: 0,
             phone_editable: false,
             sms_code: String::new(),
@@ -287,6 +293,7 @@ impl CredentialProviderState {
                 })
                 .collect()
         };
+        self.phone_choices_version = snapshot.phone_choices_version.clone();
         if self.selected_phone_choice >= self.phone_choices.len() {
             self.selected_phone_choice = 0;
         }
@@ -375,6 +382,7 @@ mod tests {
                 id: "phone-0".to_owned(),
                 masked: "138****8888".to_owned(),
             }],
+            phone_choices_version: "choices-v1".to_owned(),
             phone_editable: false,
             mfa_timeout_seconds: 90,
             sms_resend_seconds: 45,
@@ -389,6 +397,7 @@ mod tests {
             }]
         );
         assert_eq!(state.selected_phone_choice, 0);
+        assert_eq!(state.phone_choices_version, "choices-v1");
         assert!(!state.phone_editable);
         assert_eq!(state.available_auth_methods, vec![AuthMethod::PhoneCode]);
         assert_eq!(state.selected_method, AuthMethod::PhoneCode);
@@ -406,6 +415,7 @@ mod tests {
             phone_source: PhoneInputSource::ManualInput,
             masked_phone: None,
             phone_choices: Vec::new(),
+            phone_choices_version: String::new(),
             phone_editable: true,
             mfa_timeout_seconds: 120,
             sms_resend_seconds: 60,
@@ -435,6 +445,7 @@ mod tests {
                     masked: "139****9999".to_owned(),
                 },
             ],
+            phone_choices_version: "choices-v2".to_owned(),
             phone_editable: false,
             mfa_timeout_seconds: 120,
             sms_resend_seconds: 60,
@@ -444,6 +455,7 @@ mod tests {
         assert_eq!(state.phone_choices.len(), 2);
         assert_eq!(state.phone_choices[1].id, "phone-1");
         assert_eq!(state.phone_choices[1].masked, "139****9999");
+        assert_eq!(state.phone_choices_version, "choices-v2");
     }
 
     #[test]

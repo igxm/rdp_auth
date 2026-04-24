@@ -6,6 +6,7 @@
 use auth_config::AppConfig;
 use auth_core::{is_valid_default_phone_number, mask_phone_number};
 use auth_ipc::{PhoneChoiceSnapshot, PhoneInputSource, PolicySnapshot};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct PolicyContext {
@@ -52,6 +53,9 @@ pub fn policy_context_from_config(config: &AppConfig) -> PolicyContext {
                     masked: phone.masked_phone.clone(),
                 })
                 .collect(),
+            // 手机号选择版本号只用于检测 CP 持有的脱敏选择列表是否仍然匹配当前 helper 进程。
+            // 这里不能把完整手机号编码进版本号，因此使用 helper 启动期生成的非敏感运行时版本。
+            phone_choices_version: new_phone_choices_version(),
             phone_editable: false,
             mfa_timeout_seconds: config.mfa.timeout_seconds,
             sms_resend_seconds: config.mfa.sms_resend_seconds,
@@ -59,6 +63,14 @@ pub fn policy_context_from_config(config: &AppConfig) -> PolicyContext {
         configured_phones,
         configured_phone,
     }
+}
+
+fn new_phone_choices_version() -> String {
+    let now_nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!("choices-{}-{now_nanos:x}", std::process::id())
 }
 
 fn configured_phones_from_numbers(numbers: &[String]) -> Vec<ConfiguredPhone> {
@@ -106,6 +118,7 @@ mod tests {
         assert_eq!(snapshot.masked_phone, None);
         assert_eq!(snapshot.mfa_timeout_seconds, 120);
         assert_eq!(snapshot.sms_resend_seconds, 60);
+        assert!(snapshot.phone_choices_version.starts_with("choices-"));
     }
 
     #[test]
@@ -125,6 +138,7 @@ mod tests {
         assert_eq!(snapshot.phone_source, PhoneInputSource::Configured);
         assert!(!snapshot.phone_editable);
         assert_eq!(snapshot.masked_phone, Some("138****8888".to_owned()));
+        assert!(snapshot.phone_choices_version.starts_with("choices-"));
         assert_eq!(
             snapshot.phone_choices,
             vec![PhoneChoiceSnapshot {
@@ -154,6 +168,7 @@ mod tests {
 
         assert_eq!(snapshot.masked_phone, None);
         assert!(snapshot.phone_choices.is_empty());
+        assert!(snapshot.phone_choices_version.starts_with("choices-"));
         assert_eq!(context.configured_phone, None);
         assert!(context.configured_phones.is_empty());
     }
@@ -203,6 +218,12 @@ mod tests {
                     masked: "139****9999".to_owned()
                 },
             ]
+        );
+        assert!(
+            context
+                .snapshot
+                .phone_choices_version
+                .starts_with("choices-")
         );
         assert!(!snapshot_debug.contains("13812348888"));
         assert!(!snapshot_debug.contains("13912349999"));

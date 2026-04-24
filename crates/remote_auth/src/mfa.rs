@@ -16,6 +16,7 @@ const MOCK_SECOND_PASSWORD: &str = "mock-password";
 pub fn handle_send_sms(
     session_id: u32,
     phone_choice_id: &str,
+    phone_choices_version: &str,
     policy: &PolicyContext,
     sms_challenges: &mut SmsChallengeState,
     now: Instant,
@@ -25,18 +26,37 @@ pub fn handle_send_sms(
         event = "send_sms_requested",
         session_id,
         phone_choice_id,
+        phone_choices_version,
         "helper 收到发送短信请求"
     );
 
+    if let Err(message) = validate_phone_choices_version(phone_choices_version, policy) {
+        info!(
+            target: "remote_auth",
+            event = "send_sms_rejected_version",
+            session_id,
+            phone_choice_id,
+            phone_choices_version,
+            reason = %crate::diagnostics::sanitize_log_value(message),
+            "helper 拒绝发送短信请求"
+        );
+        return IpcResponse::failure(message);
+    }
+
     match resolve_configured_phone(phone_choice_id, policy) {
         Ok(_) => {
-            let challenge_ttl =
-                sms_challenges.issue_mock_challenge(session_id, phone_choice_id, now);
+            let challenge_ttl = sms_challenges.issue_mock_challenge(
+                session_id,
+                phone_choice_id,
+                phone_choices_version,
+                now,
+            );
             info!(
                 target: "remote_auth",
                 event = "send_sms_resolved_choice",
                 session_id,
                 phone_choice_id,
+                phone_choices_version,
                 challenge_ttl_seconds = challenge_ttl.as_secs(),
                 "helper 已解析手机号选择"
             );
@@ -48,6 +68,7 @@ pub fn handle_send_sms(
                 event = "send_sms_rejected_choice",
                 session_id,
                 phone_choice_id,
+                phone_choices_version,
                 reason = %crate::diagnostics::sanitize_log_value(message),
                 "helper 拒绝发送短信请求"
             );
@@ -59,6 +80,7 @@ pub fn handle_send_sms(
 pub fn handle_verify_sms(
     session_id: u32,
     phone_choice_id: &str,
+    phone_choices_version: &str,
     code: &str,
     policy: &PolicyContext,
     sms_challenges: &mut SmsChallengeState,
@@ -69,9 +91,23 @@ pub fn handle_verify_sms(
         event = "verify_sms_requested",
         session_id,
         phone_choice_id,
+        phone_choices_version,
         code_len = code.chars().count(),
         "helper 收到短信验证码校验请求"
     );
+
+    if let Err(message) = validate_phone_choices_version(phone_choices_version, policy) {
+        info!(
+            target: "remote_auth",
+            event = "verify_sms_rejected_version",
+            session_id,
+            phone_choice_id,
+            phone_choices_version,
+            reason = %crate::diagnostics::sanitize_log_value(message),
+            "helper 拒绝短信验证码校验请求"
+        );
+        return IpcResponse::failure(message);
+    }
 
     if let Err(message) = resolve_configured_phone(phone_choice_id, policy) {
         info!(
@@ -79,19 +115,26 @@ pub fn handle_verify_sms(
             event = "verify_sms_rejected_choice",
             session_id,
             phone_choice_id,
+            phone_choices_version,
             reason = %crate::diagnostics::sanitize_log_value(message),
             "helper 拒绝短信验证码校验请求"
         );
         return IpcResponse::failure(message);
     }
 
-    if let Err(error) = sms_challenges.verify_pending_challenge(session_id, phone_choice_id, now) {
+    if let Err(error) = sms_challenges.verify_pending_challenge(
+        session_id,
+        phone_choice_id,
+        phone_choices_version,
+        now,
+    ) {
         let message = challenge_error_message(error);
         info!(
             target: "remote_auth",
             event = "verify_sms_rejected_challenge",
             session_id,
             phone_choice_id,
+            phone_choices_version,
             reason = %crate::diagnostics::sanitize_log_value(message),
             "helper 拒绝短信验证码校验请求"
         );
@@ -105,6 +148,7 @@ pub fn handle_verify_sms(
             event = "verify_sms_passed",
             session_id,
             phone_choice_id,
+            phone_choices_version,
             "helper 短信验证码校验通过"
         );
         IpcResponse::success("短信验证码验证通过")
@@ -114,6 +158,7 @@ pub fn handle_verify_sms(
             event = "verify_sms_failed",
             session_id,
             phone_choice_id,
+            phone_choices_version,
             "helper 短信验证码校验失败"
         );
         IpcResponse::failure("短信验证码错误")
@@ -147,7 +192,22 @@ fn challenge_error_message(error: VerifyChallengeError) -> &'static str {
         // helper 只要发现 challenge 缺失或过期，就要求用户重新发送，避免继续使用未知状态。
         VerifyChallengeError::Missing => "验证码已过期，请重新发送",
         VerifyChallengeError::ChoiceChanged => "手机号选择已变化，请重新发送验证码",
+        VerifyChallengeError::VersionChanged => "手机号配置已更新，请重新发送验证码",
     }
+}
+
+fn validate_phone_choices_version(
+    phone_choices_version: &str,
+    policy: &PolicyContext,
+) -> Result<(), &'static str> {
+    // 版本号只用于检查“当前请求看到的脱敏手机号列表”是否仍与 helper 进程内的映射一致。
+    // 一旦 helper 重启或后续配置刷新导致版本变化，就必须拒绝旧请求，避免 choice id 错配到新号码。
+    if phone_choices_version.is_empty()
+        || phone_choices_version != policy.snapshot.phone_choices_version
+    {
+        return Err("手机号配置已更新，请重新发送验证码");
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -163,7 +223,14 @@ mod tests {
         let policy = policy_context_from_config(&AppConfig::default());
         let mut sms_challenges = SmsChallengeState::new(Duration::from_secs(120));
 
-        let response = handle_send_sms(7, "phone-0", &policy, &mut sms_challenges, Instant::now());
+        let response = handle_send_sms(
+            7,
+            "phone-0",
+            &policy.snapshot.phone_choices_version,
+            &policy,
+            &mut sms_challenges,
+            Instant::now(),
+        );
 
         assert!(!response.ok);
         assert_eq!(response.message, "手机号配置无效，请联系管理员");
@@ -182,7 +249,14 @@ mod tests {
         let policy = policy_context_from_config(&config);
         let mut sms_challenges = SmsChallengeState::new(Duration::from_secs(120));
 
-        let response = handle_send_sms(7, "phone-0", &policy, &mut sms_challenges, Instant::now());
+        let response = handle_send_sms(
+            7,
+            "phone-0",
+            &policy.snapshot.phone_choices_version,
+            &policy,
+            &mut sms_challenges,
+            Instant::now(),
+        );
 
         assert!(response.ok);
     }
@@ -201,12 +275,54 @@ mod tests {
         let now = Instant::now();
         let mut sms_challenges = SmsChallengeState::new(Duration::from_secs(120));
 
-        assert!(handle_send_sms(7, "phone-0", &policy, &mut sms_challenges, now).ok);
-        assert!(handle_verify_sms(7, "phone-0", "123456", &policy, &mut sms_challenges, now).ok);
+        assert!(
+            handle_send_sms(
+                7,
+                "phone-0",
+                &policy.snapshot.phone_choices_version,
+                &policy,
+                &mut sms_challenges,
+                now,
+            )
+            .ok
+        );
+        assert!(
+            handle_verify_sms(
+                7,
+                "phone-0",
+                &policy.snapshot.phone_choices_version,
+                "123456",
+                &policy,
+                &mut sms_challenges,
+                now,
+            )
+            .ok
+        );
 
         let mut sms_challenges = SmsChallengeState::new(Duration::from_secs(120));
-        assert!(handle_send_sms(7, "phone-0", &policy, &mut sms_challenges, now).ok);
-        assert!(!handle_verify_sms(7, "phone-0", "000000", &policy, &mut sms_challenges, now).ok);
+        assert!(
+            handle_send_sms(
+                7,
+                "phone-0",
+                &policy.snapshot.phone_choices_version,
+                &policy,
+                &mut sms_challenges,
+                now,
+            )
+            .ok
+        );
+        assert!(
+            !handle_verify_sms(
+                7,
+                "phone-0",
+                &policy.snapshot.phone_choices_version,
+                "000000",
+                &policy,
+                &mut sms_challenges,
+                now,
+            )
+            .ok
+        );
     }
 
     #[test]
@@ -222,8 +338,14 @@ mod tests {
         let policy = policy_context_from_config(&config);
         let mut sms_challenges = SmsChallengeState::new(Duration::from_secs(120));
 
-        let response =
-            handle_send_sms(7, "phone-999", &policy, &mut sms_challenges, Instant::now());
+        let response = handle_send_sms(
+            7,
+            "phone-999",
+            &policy.snapshot.phone_choices_version,
+            &policy,
+            &mut sms_challenges,
+            Instant::now(),
+        );
 
         assert!(!response.ok);
         assert_eq!(response.message, "手机号配置无效，请联系管理员");
@@ -245,6 +367,7 @@ mod tests {
         let response = handle_verify_sms(
             7,
             "phone-0",
+            &policy.snapshot.phone_choices_version,
             "123456",
             &policy,
             &mut sms_challenges,
@@ -269,12 +392,70 @@ mod tests {
         let now = Instant::now();
         let mut sms_challenges = SmsChallengeState::new(Duration::from_secs(120));
 
-        assert!(handle_send_sms(7, "phone-0", &policy, &mut sms_challenges, now).ok);
+        assert!(
+            handle_send_sms(
+                7,
+                "phone-0",
+                &policy.snapshot.phone_choices_version,
+                &policy,
+                &mut sms_challenges,
+                now,
+            )
+            .ok
+        );
 
-        let response = handle_verify_sms(7, "phone-1", "123456", &policy, &mut sms_challenges, now);
+        let response = handle_verify_sms(
+            7,
+            "phone-1",
+            &policy.snapshot.phone_choices_version,
+            "123456",
+            &policy,
+            &mut sms_challenges,
+            now,
+        );
 
         assert!(!response.ok);
         assert_eq!(response.message, "手机号选择已变化，请重新发送验证码");
+    }
+
+    #[test]
+    fn verify_sms_rejects_changed_phone_choices_version() {
+        let config = AppConfig {
+            phone: PhoneConfig {
+                source: PhoneSource::Config,
+                number: "13812348888".to_owned(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let policy = policy_context_from_config(&config);
+        let now = Instant::now();
+        let mut sms_challenges = SmsChallengeState::new(Duration::from_secs(120));
+
+        assert!(
+            handle_send_sms(
+                7,
+                "phone-0",
+                &policy.snapshot.phone_choices_version,
+                &policy,
+                &mut sms_challenges,
+                now,
+            )
+            .ok
+        );
+
+        let response = handle_verify_sms(
+            7,
+            "phone-0",
+            "choices-stale",
+            "123456",
+            &policy,
+            &mut sms_challenges,
+            now,
+        );
+
+        assert!(!response.ok);
+        assert_eq!(response.message, "手机号配置已更新，请重新发送验证码");
     }
 
     #[test]

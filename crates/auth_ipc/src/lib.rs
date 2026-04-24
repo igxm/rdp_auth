@@ -27,11 +27,13 @@ pub enum IpcRequest {
     SendSms {
         session_id: u32,
         phone_choice_id: String,
+        phone_choices_version: String,
     },
     /// 校验短信验证码。验证码仍属于敏感输入；手机号选择只允许使用非敏感 ID。
     VerifySms {
         session_id: u32,
         phone_choice_id: String,
+        phone_choices_version: String,
         code: String,
     },
     /// 校验二次密码。
@@ -90,6 +92,8 @@ pub struct PolicySnapshot {
     pub masked_phone: Option<String>,
     #[serde(default)]
     pub phone_choices: Vec<PhoneChoiceSnapshot>,
+    #[serde(default)]
+    pub phone_choices_version: String,
     pub phone_editable: bool,
     pub mfa_timeout_seconds: u64,
     pub sms_resend_seconds: u32,
@@ -197,6 +201,7 @@ mod tests {
                         masked: "139****9999".to_owned(),
                     },
                 ],
+                phone_choices_version: "choices-v1".to_owned(),
                 phone_editable: false,
                 mfa_timeout_seconds: 120,
                 sms_resend_seconds: 60,
@@ -238,12 +243,14 @@ mod tests {
         let send = IpcRequest::SendSms {
             session_id: 7,
             phone_choice_id: "phone-0".to_owned(),
+            phone_choices_version: "choices-v1".to_owned(),
         }
         .to_json()
         .unwrap();
         let verify = IpcRequest::VerifySms {
             session_id: 7,
             phone_choice_id: "phone-0".to_owned(),
+            phone_choices_version: "choices-v1".to_owned(),
             code: "123456".to_owned(),
         }
         .to_json()
@@ -256,7 +263,8 @@ mod tests {
             IpcRequest::from_json(&send).unwrap(),
             IpcRequest::SendSms {
                 session_id: 7,
-                phone_choice_id: "phone-0".to_owned()
+                phone_choice_id: "phone-0".to_owned(),
+                phone_choices_version: "choices-v1".to_owned(),
             }
         );
     }

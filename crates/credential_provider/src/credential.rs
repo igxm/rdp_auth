@@ -458,6 +458,7 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
                     self.refresh_visible_fields()?;
                     return Ok(());
                 };
+                let phone_choices_version = state.phone_choices_version.clone();
                 // helper 接入前先只更新 UI 状态，不在 LogonUI 进程里做网络请求。CP DLL
                 // 被 LogonUI 加载，网络超时、TLS 初始化或服务端卡顿都会卡住登录界面；真实短信发送必须
                 // 放到 remote_auth helper，通过短超时 IPC 返回可展示结果，失败时按 fail closed 处理。
@@ -466,13 +467,15 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
                 log_event(
                     "CommandLinkClicked",
                     format!(
-                        "send_sms_request choice_id={} remaining={remaining} generation={generation} extend_timeout={should_extend_timeout}",
-                        redact_choice_id_for_log(&phone_choice_id)
+                        "send_sms_request choice_id={} version_present={} remaining={remaining} generation={generation} extend_timeout={should_extend_timeout}",
+                        redact_choice_id_for_log(&phone_choice_id),
+                        !phone_choices_version.is_empty()
                     ),
                 );
                 drop(state);
                 if let Err(error) = send_sms_code_for_current_session(
                     &phone_choice_id,
+                    &phone_choices_version,
                     Duration::from_millis(timeout_ms),
                 ) {
                     let mut state = self.state.lock().expect("credential state poisoned");
@@ -930,6 +933,7 @@ mod tests {
                 id: "phone-0".to_owned(),
                 masked: "138****8888".to_owned(),
             }],
+            phone_choices_version: "choices-v1".to_owned(),
             phone_editable: false,
             mfa_timeout_seconds: 120,
             sms_resend_seconds: 60,
@@ -962,6 +966,7 @@ mod tests {
                     masked: "139****9999".to_owned(),
                 },
             ],
+            phone_choices_version: "choices-v2".to_owned(),
             phone_editable: false,
             mfa_timeout_seconds: 120,
             sms_resend_seconds: 60,

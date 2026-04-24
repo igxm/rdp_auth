@@ -219,7 +219,7 @@
 - [ ] 真实短信 API 接入时采用 `challenge_token` 方案：`send_sms` 成功后由后端返回 opaque challenge，helper 只在内存中保存 challenge 状态，不在 `verify_sms` 阶段重复从 CP 回传手机号。
 - [x] helper 内存态增加短信 challenge 状态：至少包含 `session_id`、`phone_choice_id`、`challenge_token`、过期时间、最近状态和 TTL；不得落盘，不得写入日志原值。
 - [ ] `verify_sms` 改为优先使用 `challenge_token + code` 调后端校验；若 challenge 缺失、过期、手机号选择已变化或版本不一致，必须 fail closed。
-- [ ] 设计并实现手机号选择快照版本号或等效 challenge 上下文，防止旧 `phone_choice_id` 错配到更新后的号码。
+- [x] 设计并实现手机号选择快照版本号或等效 challenge 上下文，防止旧 `phone_choice_id` 错配到更新后的号码。
 - [x] 支持 `verify_second_password` 请求。
 - [x] 支持 `post_login_log` 请求。
 - [x] 第一版 helper 先返回 mock 结果，用固定验证码验证主链路。
@@ -406,6 +406,7 @@
 - [x] 单元测试：`phone.numbers` 解析、归一化、去空、去重和 fallback 到旧 `phone.number`；号码合法性仍留给 helper 二次校验。
 - [x] 单元测试：多手机号策略快照只包含 `phone_choice_id` 和脱敏手机号，不包含完整手机号。
 - [x] 单元测试：`send_sms` / `verify_sms` 只携带 `phone_choice_id`，helper 用该 ID 映射完整手机号；未知 ID、空列表和非法配置都 fail closed。
+- [x] 单元测试：`phone_choices_version` 会随策略快照下发，helper 对旧版本或空版本请求 fail closed，避免旧 `phone_choice_id` 错配到新号码。
 - [x] 单元测试：Credential Provider 多手机号选择框只保存脱敏展示值和 `phone_choice_id`，选择变化不会把完整手机号写入状态或日志。
 - [x] 单元测试：本机内网 IP 枚举会过滤 loopback、link-local、公网地址和明显无效地址，并保留多网卡有效内网地址。
 - [ ] 单元测试：公网 IP 获取失败时按策略返回 `unknown` 或 fail closed。
