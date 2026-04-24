@@ -142,3 +142,14 @@ Credential Provider UI 可以把手机号字段从普通文本升级为组合框
 - 手机号只能由 helper 从加密配置读取和校验，Credential Provider 不再提供手机号输入框，策略快照只包含脱敏手机号或脱敏手机号选择项；旧配置中的 `phone.source = "input"` 会被归一化为 `config`。明文导出 TOML 会短暂包含完整手机号，必须按敏感文件处理。
 - 远程配置必须带版本、更新时间、TTL 和签名或 HMAC；校验失败不得生效。
 - 单元测试和 VM 测试必须覆盖 AES 加密文件读取、错误密文、错误机器码、旧版明文迁移和导入/导出；Windows Server 2008 R2 兼容性暂不纳入当前测试目标。
+
+
+## Challenge Token 方案（后续）
+
+后续接入真实短信 API 时，固定采用 `challenge_token` 方案，不在 `verify_sms` 阶段重复把手机号传回后端。
+
+- `send_sms` 阶段由 helper 在本进程内把 `phone_choice_id` 映射到完整手机号，再向后端发起发送短信请求。
+- 后端返回 opaque `challenge_token` 后，helper 只在内存中保存 `session_id`、`phone_choice_id`、`challenge_token`、过期时间和 challenge 状态，不落盘。
+- `verify_sms` 阶段由 helper 用 `challenge_token + code` 向后端校验，不在校验时重复把手机号从 CP 侧回传。
+- Credential Provider、IPC 响应、策略快照、诊断日志、错误文本均不得包含 `challenge_token` 原值。
+- 如需防止旧 `phone_choice_id` 对应到新号码的错配，应在手机号选择快照中增加配置版本、代次或等效 challenge 上下文；helper 发现映射不一致时必须 fail closed，并提示用户重新选择手机号。

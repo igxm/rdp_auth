@@ -216,6 +216,10 @@
 - [ ] helper 获取本机公网 IP：优先调用自家服务端公网 IP 查询接口；失败时填充 `unknown`，默认不阻断短信发送，除非远程策略要求 fail closed。
 - [x] helper 返回短信发送成功后，驱动 CP 进入 60 秒重新发送倒计时。（helper 已返回成功响应；CP 通过命名管道接入后使用该响应启动倒计时）
 - [x] 支持 `verify_sms` 请求。
+- [ ] 真实短信 API 接入时采用 `challenge_token` 方案：`send_sms` 成功后由后端返回 opaque challenge，helper 只在内存中保存 challenge 状态，不在 `verify_sms` 阶段重复从 CP 回传手机号。
+- [ ] helper 内存态增加短信 challenge 状态：至少包含 `session_id`、`phone_choice_id`、`challenge_token`、过期时间、最近状态和 TTL；不得落盘，不得写入日志原值。
+- [ ] `verify_sms` 改为优先使用 `challenge_token + code` 调后端校验；若 challenge 缺失、过期、手机号选择已变化或版本不一致，必须 fail closed。
+- [ ] 设计并实现手机号选择快照版本号或等效 challenge 上下文，防止旧 `phone_choice_id` 错配到更新后的号码。
 - [x] 支持 `verify_second_password` 请求。
 - [x] 支持 `post_login_log` 请求。
 - [x] 第一版 helper 先返回 mock 结果，用固定验证码验证主链路。
@@ -452,6 +456,7 @@
 
 - [ ] Windows 密码和 RDP 原始凭证 serialization 不写日志。
 - [ ] 验证码、二次密码、token 不写日志。
+- [ ] `challenge_token` 不进入 Credential Provider、IPC 响应、策略快照、诊断日志、错误文本或落盘缓存；helper -> 后端之外的链路只能看到非敏感 `phone_choice_id`。
 - [ ] 手机号必须按脱敏格式写入 UI、诊断日志和 API 日志；禁止记录配置文件中的完整手机号。
 - [x] 配置模式真实手机号只能由 helper 从解密配置读取并短暂保存在内存中；Credential Provider、诊断日志、策略快照和远程配置缓存不得保存完整手机号。
 - [ ] 多手机号选择只允许使用非敏感 `phone_choice_id` 跨 CP/helper 边界；禁止在 IPC、CP 状态、诊断日志、错误文本或策略快照中传递完整手机号。
