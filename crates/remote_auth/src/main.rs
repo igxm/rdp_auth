@@ -11,6 +11,7 @@ mod pipe_server;
 mod policy;
 mod remote_config;
 mod router;
+mod session_challenge;
 mod session_notification;
 mod session_state;
 
@@ -18,6 +19,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use auth_ipc::IpcResponse;
+use session_challenge::SmsChallengeState;
 use session_state::SessionAuthState;
 use tracing::info;
 
@@ -26,6 +28,7 @@ fn main() -> Result<()> {
 
     let config = auth_config::load_app_config();
     let sessions = SessionAuthState::new(Duration::from_secs(config.mfa.session_state_ttl_seconds));
+    let sms_challenges = SmsChallengeState::new(Duration::from_secs(config.mfa.timeout_seconds));
     let policy = policy::load_policy_context_from_disk();
     info!(
         target: "remote_auth",
@@ -39,7 +42,7 @@ fn main() -> Result<()> {
 
     let response = IpcResponse::success("remote_auth helper 已启动");
     println!("{}", response.message);
-    let mut server = pipe_server::PipeServer::new(sessions, policy);
+    let mut server = pipe_server::PipeServer::new(sessions, sms_challenges, policy);
     let _session_notification =
         session_notification::start_session_notification_listener(server.sessions());
     pipe_server::run_pipe_server(&mut server)

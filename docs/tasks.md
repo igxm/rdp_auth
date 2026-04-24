@@ -217,7 +217,7 @@
 - [x] helper 返回短信发送成功后，驱动 CP 进入 60 秒重新发送倒计时。（helper 已返回成功响应；CP 通过命名管道接入后使用该响应启动倒计时）
 - [x] 支持 `verify_sms` 请求。
 - [ ] 真实短信 API 接入时采用 `challenge_token` 方案：`send_sms` 成功后由后端返回 opaque challenge，helper 只在内存中保存 challenge 状态，不在 `verify_sms` 阶段重复从 CP 回传手机号。
-- [ ] helper 内存态增加短信 challenge 状态：至少包含 `session_id`、`phone_choice_id`、`challenge_token`、过期时间、最近状态和 TTL；不得落盘，不得写入日志原值。
+- [x] helper 内存态增加短信 challenge 状态：至少包含 `session_id`、`phone_choice_id`、`challenge_token`、过期时间、最近状态和 TTL；不得落盘，不得写入日志原值。
 - [ ] `verify_sms` 改为优先使用 `challenge_token + code` 调后端校验；若 challenge 缺失、过期、手机号选择已变化或版本不一致，必须 fail closed。
 - [ ] 设计并实现手机号选择快照版本号或等效 challenge 上下文，防止旧 `phone_choice_id` 错配到更新后的号码。
 - [x] 支持 `verify_second_password` 请求。

@@ -8,11 +8,13 @@ use auth_ipc::{IpcRequest, IpcResponse, IpcResponsePayload, SessionStateResponse
 use tracing::info;
 
 use crate::policy::PolicyContext;
+use crate::session_challenge::SmsChallengeState;
 use crate::session_state::SessionAuthState;
 
 pub fn handle_request(
     request: IpcRequest,
     sessions: &mut SessionAuthState,
+    sms_challenges: &mut SmsChallengeState,
     now: Instant,
     policy: PolicyContext,
 ) -> IpcResponse {
@@ -44,16 +46,28 @@ pub fn handle_request(
         }
         IpcRequest::ClearSessionState { session_id } => {
             sessions.clear_session(session_id);
+            sms_challenges.clear_session(session_id);
             IpcResponse::success("session 已清理")
         }
         IpcRequest::SendSms {
-            phone_choice_id, ..
-        } => crate::mfa::handle_send_sms(&phone_choice_id, &policy),
+            session_id,
+            phone_choice_id,
+        } => {
+            crate::mfa::handle_send_sms(session_id, &phone_choice_id, &policy, sms_challenges, now)
+        }
         IpcRequest::VerifySms {
+            session_id,
             phone_choice_id,
             code,
             ..
-        } => crate::mfa::handle_verify_sms(&phone_choice_id, &code, &policy),
+        } => crate::mfa::handle_verify_sms(
+            session_id,
+            &phone_choice_id,
+            &code,
+            &policy,
+            sms_challenges,
+            now,
+        ),
         IpcRequest::VerifySecondPassword { password, .. } => {
             crate::mfa::handle_verify_second_password(&password)
         }
@@ -119,6 +133,7 @@ fn request_session_id(request: &IpcRequest) -> u32 {
 mod tests {
     use super::handle_request;
     use crate::policy::policy_context_from_config;
+    use crate::session_challenge::SmsChallengeState;
     use crate::session_state::SessionAuthState;
     use auth_config::{AppConfig, PhoneConfig, PhoneSource};
     use auth_ipc::{IpcRequest, IpcResponsePayload};
@@ -128,11 +143,13 @@ mod tests {
     fn routes_policy_snapshot_without_sensitive_phone() {
         let now = Instant::now();
         let mut sessions = SessionAuthState::new(Duration::from_secs(60));
+        let mut sms_challenges = SmsChallengeState::new(Duration::from_secs(120));
         let policy = policy_context_from_config(&AppConfig::default());
 
         let response = handle_request(
             IpcRequest::GetPolicySnapshot { session_id: 7 },
             &mut sessions,
+            &mut sms_challenges,
             now,
             policy,
         );
@@ -148,11 +165,13 @@ mod tests {
     fn routes_session_mark_and_query() {
         let now = Instant::now();
         let mut sessions = SessionAuthState::new(Duration::from_secs(60));
+        let mut sms_challenges = SmsChallengeState::new(Duration::from_secs(120));
         let policy = policy_context_from_config(&AppConfig::default());
 
         let mark = handle_request(
             IpcRequest::MarkSessionAuthenticated { session_id: 7 },
             &mut sessions,
+            &mut sms_challenges,
             now,
             policy.clone(),
         );
@@ -161,6 +180,7 @@ mod tests {
         let query = handle_request(
             IpcRequest::HasAuthenticatedSession { session_id: 7 },
             &mut sessions,
+            &mut sms_challenges,
             now,
             policy,
         );
@@ -176,11 +196,13 @@ mod tests {
     fn routes_session_clear_after_mark() {
         let now = Instant::now();
         let mut sessions = SessionAuthState::new(Duration::from_secs(60));
+        let mut sms_challenges = SmsChallengeState::new(Duration::from_secs(120));
         let policy = policy_context_from_config(&AppConfig::default());
 
         let mark = handle_request(
             IpcRequest::MarkSessionAuthenticated { session_id: 7 },
             &mut sessions,
+            &mut sms_challenges,
             now,
             policy.clone(),
         );
@@ -189,6 +211,7 @@ mod tests {
         let clear = handle_request(
             IpcRequest::ClearSessionState { session_id: 7 },
             &mut sessions,
+            &mut sms_challenges,
             now,
             policy.clone(),
         );
@@ -197,6 +220,7 @@ mod tests {
         let query = handle_request(
             IpcRequest::HasAuthenticatedSession { session_id: 7 },
             &mut sessions,
+            &mut sms_challenges,
             now,
             policy,
         );
@@ -211,6 +235,7 @@ mod tests {
     fn routes_post_login_log_request() {
         let now = Instant::now();
         let mut sessions = SessionAuthState::new(Duration::from_secs(60));
+        let mut sms_challenges = SmsChallengeState::new(Duration::from_secs(120));
         let policy = policy_context_from_config(&AppConfig::default());
 
         let response = handle_request(
@@ -220,6 +245,7 @@ mod tests {
                 success: false,
             },
             &mut sessions,
+            &mut sms_challenges,
             now,
             policy,
         );
@@ -233,6 +259,7 @@ mod tests {
     fn routes_mock_mfa_requests() {
         let now = Instant::now();
         let mut sessions = SessionAuthState::new(Duration::from_secs(60));
+        let mut sms_challenges = SmsChallengeState::new(Duration::from_secs(120));
         let policy = policy_context_from_config(&AppConfig {
             phone: PhoneConfig {
                 source: PhoneSource::Config,
@@ -248,6 +275,7 @@ mod tests {
                 phone_choice_id: "phone-0".to_owned(),
             },
             &mut sessions,
+            &mut sms_challenges,
             now,
             policy.clone(),
         );
@@ -260,6 +288,7 @@ mod tests {
                 code: "123456".to_owned(),
             },
             &mut sessions,
+            &mut sms_challenges,
             now,
             policy.clone(),
         );
@@ -271,9 +300,60 @@ mod tests {
                 password: "mock-password".to_owned(),
             },
             &mut sessions,
+            &mut sms_challenges,
             now,
             policy,
         );
         assert!(verify_password.ok);
+    }
+
+    #[test]
+    fn clear_session_also_clears_sms_challenge() {
+        let now = Instant::now();
+        let mut sessions = SessionAuthState::new(Duration::from_secs(60));
+        let mut sms_challenges = SmsChallengeState::new(Duration::from_secs(120));
+        let policy = policy_context_from_config(&AppConfig {
+            phone: PhoneConfig {
+                source: PhoneSource::Config,
+                number: "13812348888".to_owned(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        let send = handle_request(
+            IpcRequest::SendSms {
+                session_id: 7,
+                phone_choice_id: "phone-0".to_owned(),
+            },
+            &mut sessions,
+            &mut sms_challenges,
+            now,
+            policy.clone(),
+        );
+        assert!(send.ok);
+
+        let clear = handle_request(
+            IpcRequest::ClearSessionState { session_id: 7 },
+            &mut sessions,
+            &mut sms_challenges,
+            now,
+            policy.clone(),
+        );
+        assert!(clear.ok);
+
+        let verify_sms = handle_request(
+            IpcRequest::VerifySms {
+                session_id: 7,
+                phone_choice_id: "phone-0".to_owned(),
+                code: "123456".to_owned(),
+            },
+            &mut sessions,
+            &mut sms_challenges,
+            now,
+            policy,
+        );
+        assert!(!verify_sms.ok);
+        assert_eq!(verify_sms.message, "验证码已过期，请重新发送");
     }
 }

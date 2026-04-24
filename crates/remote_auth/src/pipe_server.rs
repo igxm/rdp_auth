@@ -9,6 +9,9 @@ use auth_ipc::{IpcRequest, IpcResponse};
 use tracing::{error, info, warn};
 
 use crate::policy::PolicyContext;
+use crate::session_challenge::{
+    SharedSmsChallengeState, SmsChallengeState, shared_sms_challenge_state,
+};
 use crate::session_state::{SessionAuthState, SharedSessionAuthState, shared_session_state};
 
 pub const HELPER_PIPE_PATH: &str = r"\\.\pipe\rdp_auth_helper";
@@ -16,13 +19,19 @@ const MAX_REQUEST_BYTES: usize = 64 * 1024;
 
 pub struct PipeServer {
     sessions: SharedSessionAuthState,
+    sms_challenges: SharedSmsChallengeState,
     policy: PolicyContext,
 }
 
 impl PipeServer {
-    pub fn new(sessions: SessionAuthState, policy: PolicyContext) -> Self {
+    pub fn new(
+        sessions: SessionAuthState,
+        sms_challenges: SmsChallengeState,
+        policy: PolicyContext,
+    ) -> Self {
         Self {
             sessions: shared_session_state(sessions),
+            sms_challenges: shared_sms_challenge_state(sms_challenges),
             policy,
         }
     }
@@ -33,11 +42,15 @@ impl PipeServer {
 
     fn handle_request_json(&mut self, request_json: &str, now: Instant) -> IpcResponse {
         match IpcRequest::from_json(request_json.trim()) {
-            Ok(request) => match self.sessions.lock() {
-                Ok(mut sessions) => {
-                    crate::router::handle_request(request, &mut sessions, now, self.policy.clone())
-                }
-                Err(error) => {
+            Ok(request) => match (self.sessions.lock(), self.sms_challenges.lock()) {
+                (Ok(mut sessions), Ok(mut sms_challenges)) => crate::router::handle_request(
+                    request,
+                    &mut sessions,
+                    &mut sms_challenges,
+                    now,
+                    self.policy.clone(),
+                ),
+                (Err(error), _) => {
                     warn!(
                         target: "remote_auth",
                         event = "session_state_lock_failed",
@@ -45,6 +58,15 @@ impl PipeServer {
                         "helper session 状态锁已损坏"
                     );
                     IpcResponse::failure("session 状态不可用")
+                }
+                (_, Err(error)) => {
+                    warn!(
+                        target: "remote_auth",
+                        event = "sms_challenge_state_lock_failed",
+                        error = %crate::diagnostics::sanitize_log_value(&error.to_string()),
+                        "helper 短信 challenge 状态锁已损坏"
+                    );
+                    IpcResponse::failure("短信状态不可用")
                 }
             },
             Err(error) => {
@@ -212,6 +234,7 @@ pub fn run_pipe_server(_server: &mut PipeServer) -> anyhow::Result<()> {
 mod tests {
     use super::PipeServer;
     use crate::policy::policy_context_from_config;
+    use crate::session_challenge::SmsChallengeState;
     use crate::session_state::SessionAuthState;
     use auth_config::AppConfig;
     use auth_ipc::{IpcRequest, IpcResponsePayload};
@@ -220,6 +243,7 @@ mod tests {
     fn test_server() -> PipeServer {
         PipeServer::new(
             SessionAuthState::new(Duration::from_secs(60)),
+            SmsChallengeState::new(Duration::from_secs(120)),
             policy_context_from_config(&AppConfig::default()),
         )
     }
