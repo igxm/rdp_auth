@@ -27,7 +27,7 @@
 - [x] `phone_choices_version`
 - [x] helper 内存态短信 challenge
 - [ ] 真实短信 API challenge 接入（真实后端待联调，当前已完成 HTTP 逻辑和 mock 服务验证）
-- [ ] 二次密码真实 API 接入
+- [ ] 二次密码真实 API 接入（真实后端待联调，当前已完成 HTTP 逻辑、helper 接入和 mock 服务验证）
 - [ ] 审计上报真实 API 接入
 
 ## 3. 近期待办
@@ -50,7 +50,7 @@
 
 ### P2：真实业务能力
 
-- [ ] 二次密码改为 helper -> `auth_api`
+- [x] 二次密码已改为 helper -> `auth_api`，默认占位配置继续保留 mock fallback
 - [ ] 登录日志上报改为 helper -> `auth_api`
 - [ ] 远程配置拉取、缓存、完整性校验
 - [ ] 远程配置缓存 `.enc` 落盘
@@ -68,7 +68,9 @@
 - [ ] 公网 IP 获取失败时按策略返回 `unknown` 或 fail closed
 - [ ] MFA timeout generation 与 missing-serialization generation 的独立性边界
 - [x] `auth_api` mock 服务下的真实 HTTP `send_sms` / `verify_sms`
+- [x] `auth_api` mock 服务下的真实 HTTP `verify_second_password`
 - [ ] helper 接真实后端联调下的 `send_sms` / `verify_sms`
+- [ ] helper 接真实后端联调下的 `verify_second_password`
 
 ### 集成测试
 

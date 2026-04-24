@@ -154,7 +154,7 @@ Get-Content C:\ProgramData\rdp_auth\logs\credential_provider.log -Tail 80
 - `DisableMfa` 是否为 `0`。
 - 是否仍在旧 DLL 上测试。
 
-当前 mock 认证只用于验证 Credential Provider 主链路，真实短信发送、二次密码校验和登录日志上报仍在后续 helper/API 阶段接入。
+当前 mock 认证仍用于验证 Credential Provider 主链路，但 helper -> `auth_api` 已经具备短信发送、短信校验和二次密码校验的真实 HTTP 请求代码，并通过 crate 内 mock 服务完成验证。默认占位服务地址下，这些接口仍会回退到 mock 语义，便于在正式后端联调前继续验证登录流程；登录日志上报仍在后续 helper/API 阶段接入。
 
 ## 7. 策略调整
 

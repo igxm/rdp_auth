@@ -19,6 +19,9 @@ const SEND_SMS_PATH: &str = "/api/host_instance/getSSHLoginCode";
 // 当前仓库里只有短信发送接口路径有旧实现线索，校验路径还没有正式后端契约。
 // 这里先收敛成独立常量，便于后续和真实后端对齐时只改一处。
 const VERIFY_SMS_PATH: &str = "/api/host_instance/verifySSHLoginCode";
+// 二次密码接口在旧文档里只有“发起校验请求”的抽象描述，尚无正式服务端契约。
+// 这里先按 helper -> auth_api 的受控边界约定独立路径，后续联调时只需要替换这一处常量。
+const VERIFY_SECOND_PASSWORD_PATH: &str = "/api/host_instance/verifySecondPassword";
 
 /// 发送短信后由服务端返回的 challenge 元数据。
 ///
@@ -215,10 +218,26 @@ impl AuthApiClient {
     }
 
     /// 校验二次密码。具体路径未确定前继续 fail closed。
-    pub fn verify_second_password(&self, _password: &str) -> Result<()> {
-        Err(ApiError::NotImplemented {
-            operation: "verify_second_password",
-        })
+    pub fn verify_second_password(&self, password: &str) -> Result<()> {
+        if self.uses_placeholder_service() {
+            return Err(ApiError::NotImplemented {
+                operation: "verify_second_password",
+            });
+        }
+        let response = self
+            .post_json(VERIFY_SECOND_PASSWORD_PATH, &VerifySecondPasswordRequest { password })?
+            .json::<BasicResponseEnvelope>()
+            .map_err(|_| ApiError::ResponseParse)?;
+
+        if response.ok {
+            Ok(())
+        } else {
+            Err(ApiError::ServerRejected {
+                code: response
+                    .code
+                    .unwrap_or_else(|| "verify_second_password_rejected".to_owned()),
+            })
+        }
     }
 
     /// 上报登录日志。具体请求结构未确定前继续 fail closed。
@@ -262,6 +281,11 @@ struct SendSmsRequest<'a> {
 struct VerifySmsRequest<'a> {
     challenge_token: &'a str,
     code: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+struct VerifySecondPasswordRequest<'a> {
+    password: &'a str,
 }
 
 #[derive(Debug, Deserialize)]
@@ -452,6 +476,24 @@ mod tests {
     }
 
     #[test]
+    fn verify_second_password_posts_real_json_and_accepts_ok_response() {
+        let server = MockHttpServer::serve_once(200, json!({ "ok": true }));
+        let client = AuthApiClient::new(ApiConfig {
+            base_url: server.base_url(),
+            public_ip_endpoint: format!("{}/ip", server.base_url()),
+            ..Default::default()
+        })
+        .unwrap();
+
+        client.verify_second_password("mock-password").unwrap();
+        let request = server.finish();
+
+        assert_eq!(request.method, "POST");
+        assert_eq!(request.path, "/api/host_instance/verifySecondPassword");
+        assert_eq!(request.json_body["password"], "mock-password");
+    }
+
+    #[test]
     fn server_rejected_response_maps_to_safe_error() {
         let server = MockHttpServer::serve_once(
             200,
@@ -500,6 +542,35 @@ mod tests {
     }
 
     #[test]
+    fn verify_second_password_rejected_response_maps_to_safe_error() {
+        let server = MockHttpServer::serve_once(
+            200,
+            json!({
+                "ok": false,
+                "code": "bad_password"
+            }),
+        );
+        let client = AuthApiClient::new(ApiConfig {
+            base_url: server.base_url(),
+            public_ip_endpoint: format!("{}/ip", server.base_url()),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let error = client.verify_second_password("wrong-password").unwrap_err();
+
+        assert_eq!(
+            error,
+            ApiError::ServerRejected {
+                code: "bad_password".to_owned()
+            }
+        );
+        assert_eq!(error.user_message(), "二次认证未通过");
+        let request = server.finish();
+        assert_eq!(request.path, "/api/host_instance/verifySecondPassword");
+    }
+
+    #[test]
     fn malformed_response_maps_to_parse_error_without_echoing_phone() {
         let server = MockHttpServer::serve_once_raw(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 1\r\nConnection: close\r\n\r\n{"
@@ -536,6 +607,12 @@ mod tests {
                 .unwrap_err(),
             ApiError::NotImplemented {
                 operation: "verify_sms_code"
+            }
+        );
+        assert_eq!(
+            client.verify_second_password("mock-password").unwrap_err(),
+            ApiError::NotImplemented {
+                operation: "verify_second_password"
             }
         );
     }

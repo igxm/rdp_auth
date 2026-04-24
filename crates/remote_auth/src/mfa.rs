@@ -24,6 +24,10 @@ trait SmsSendApi {
     fn send_sms_code(&self, phone: &str) -> Result<SmsChallenge, AuthApiError>;
 }
 
+trait SecondPasswordApi {
+    fn verify_second_password(&self, password: &str) -> Result<(), AuthApiError>;
+}
+
 impl SmsVerifyApi for AuthApiClient {
     fn verify_sms_code(&self, challenge_token: &str, code: &str) -> Result<(), AuthApiError> {
         AuthApiClient::verify_sms_code(self, challenge_token, code)
@@ -33,6 +37,12 @@ impl SmsVerifyApi for AuthApiClient {
 impl SmsSendApi for AuthApiClient {
     fn send_sms_code(&self, phone: &str) -> Result<SmsChallenge, AuthApiError> {
         AuthApiClient::send_sms_code(self, phone)
+    }
+}
+
+impl SecondPasswordApi for AuthApiClient {
+    fn verify_second_password(&self, password: &str) -> Result<(), AuthApiError> {
+        AuthApiClient::verify_second_password(self, password)
     }
 }
 
@@ -357,10 +367,74 @@ fn handle_verify_sms_with_api(
 }
 
 pub fn handle_verify_second_password(password: &str) -> IpcResponse {
-    if password == MOCK_SECOND_PASSWORD {
-        IpcResponse::success("二次密码验证通过")
-    } else {
-        IpcResponse::failure("二次密码错误")
+    let config = auth_config::load_app_config();
+    let api_client = match AuthApiClient::new(config.api.clone()) {
+        Ok(client) => Some(client),
+        Err(error) => {
+            info!(
+                target: "remote_auth",
+                event = "verify_second_password_api_client_invalid",
+                reason = error.diagnostic_code(),
+                "helper 无法初始化二次密码校验 API 客户端"
+            );
+            None
+        }
+    };
+    handle_verify_second_password_with_api(password, api_client.as_ref())
+}
+
+fn handle_verify_second_password_with_api(
+    password: &str,
+    api: Option<&impl SecondPasswordApi>,
+) -> IpcResponse {
+    info!(
+        target: "remote_auth",
+        event = "verify_second_password_requested",
+        password_len = password.chars().count(),
+        "helper 收到二次密码校验请求"
+    );
+
+    match api {
+        Some(api) => match api.verify_second_password(password) {
+            Ok(()) => {
+                info!(
+                    target: "remote_auth",
+                    event = "verify_second_password_passed",
+                    verify_mode = "auth_api",
+                    "helper 二次密码校验通过"
+                );
+                IpcResponse::success("二次密码验证通过")
+            }
+            Err(AuthApiError::NotImplemented { .. }) if password == MOCK_SECOND_PASSWORD => {
+                info!(
+                    target: "remote_auth",
+                    event = "verify_second_password_passed",
+                    verify_mode = "mock_fallback",
+                    "helper 二次密码校验通过"
+                );
+                IpcResponse::success("二次密码验证通过")
+            }
+            Err(error) => {
+                info!(
+                    target: "remote_auth",
+                    event = "verify_second_password_failed",
+                    verify_mode = "auth_api",
+                    reason = error.diagnostic_code(),
+                    "helper 二次密码校验失败"
+                );
+                IpcResponse::failure(error.user_message())
+            }
+        },
+        None => {
+            info!(
+                target: "remote_auth",
+                event = "verify_second_password_failed",
+                verify_mode = "auth_api",
+                reason = "api_client_unavailable",
+                "helper 二次密码校验失败"
+            );
+            IpcResponse::failure("认证服务配置无效，请联系管理员")
+        }
     }
 }
 
@@ -410,8 +484,9 @@ mod tests {
     use auth_config::{AppConfig, PhoneConfig, PhoneSource};
 
     use super::{
-        MOCK_SMS_CODE, SmsSendApi, SmsVerifyApi, handle_send_sms, handle_send_sms_with_api,
-        handle_verify_second_password, handle_verify_sms_with_api,
+        MOCK_SMS_CODE, SecondPasswordApi, SmsSendApi, SmsVerifyApi, handle_send_sms,
+        handle_send_sms_with_api, handle_verify_second_password,
+        handle_verify_second_password_with_api, handle_verify_sms_with_api,
     };
     use crate::policy::policy_context_from_config;
     use crate::session_challenge::SmsChallengeState;
@@ -489,6 +564,39 @@ mod tests {
     impl SmsSendApi for FakeSendApi {
         fn send_sms_code(&self, phone: &str) -> Result<SmsChallenge, ApiError> {
             self.calls.lock().unwrap().push(phone.to_owned());
+            self.result.clone()
+        }
+    }
+
+    #[derive(Clone)]
+    struct FakeSecondPasswordApi {
+        calls: Arc<Mutex<Vec<String>>>,
+        result: Result<(), ApiError>,
+    }
+
+    impl FakeSecondPasswordApi {
+        fn success() -> Self {
+            Self {
+                calls: Arc::new(Mutex::new(Vec::new())),
+                result: Ok(()),
+            }
+        }
+
+        fn reject(result: ApiError) -> Self {
+            Self {
+                calls: Arc::new(Mutex::new(Vec::new())),
+                result: Err(result),
+            }
+        }
+
+        fn calls(&self) -> Vec<String> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl SecondPasswordApi for FakeSecondPasswordApi {
+        fn verify_second_password(&self, password: &str) -> Result<(), ApiError> {
+            self.calls.lock().unwrap().push(password.to_owned());
             self.result.clone()
         }
     }
@@ -903,6 +1011,52 @@ mod tests {
     fn verify_second_password_uses_mock_password() {
         assert!(handle_verify_second_password("mock-password").ok);
         assert!(!handle_verify_second_password("wrong").ok);
+    }
+
+    #[test]
+    fn verify_second_password_uses_auth_api_when_available() {
+        let api = FakeSecondPasswordApi::success();
+
+        let response = handle_verify_second_password_with_api("service-password", Some(&api));
+
+        assert!(response.ok);
+        assert_eq!(api.calls(), vec!["service-password".to_owned()]);
+    }
+
+    #[test]
+    fn verify_second_password_falls_back_to_mock_when_service_is_not_implemented() {
+        let api = FakeSecondPasswordApi::reject(ApiError::NotImplemented {
+            operation: "verify_second_password",
+        });
+
+        let response = handle_verify_second_password_with_api("mock-password", Some(&api));
+
+        assert!(response.ok);
+        assert_eq!(api.calls(), vec!["mock-password".to_owned()]);
+    }
+
+    #[test]
+    fn verify_second_password_maps_api_errors_to_safe_message() {
+        let api = FakeSecondPasswordApi::reject(ApiError::HttpStatus { status: 503 });
+
+        let response = handle_verify_second_password_with_api("wrong-password", Some(&api));
+
+        assert!(!response.ok);
+        assert_eq!(
+            response.message,
+            "认证服务暂时不可用，请稍后重试或联系管理员"
+        );
+    }
+
+    #[test]
+    fn verify_second_password_rejects_missing_api_client() {
+        let response = handle_verify_second_password_with_api(
+            "service-password",
+            None::<&FakeSecondPasswordApi>,
+        );
+
+        assert!(!response.ok);
+        assert_eq!(response.message, "认证服务配置无效，请联系管理员");
     }
 
     #[test]
