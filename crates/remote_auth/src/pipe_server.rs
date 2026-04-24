@@ -41,7 +41,20 @@ impl PipeServer {
     }
 
     fn handle_request_json(&mut self, request_json: &str, now: Instant) -> IpcResponse {
-        match IpcRequest::from_json(request_json.trim()) {
+        let trimmed = request_json.trim();
+        if trimmed.is_empty() {
+            // 命名管道 transport 必须把“空请求”和“协议格式错误”区分开：前者往往意味着
+            // 调用端提前断开、写入失败或跨进程读写时序异常。这里直接 fail closed，避免把
+            // 空白输入继续交给路由层后混淆成业务错误。
+            warn!(
+                target: "remote_auth",
+                event = "ipc_request_empty",
+                "helper 收到空白 IPC 请求"
+            );
+            return IpcResponse::failure("IPC 请求为空");
+        }
+
+        match IpcRequest::from_json(trimmed) {
             Ok(request) => match (self.sessions.lock(), self.sms_challenges.lock()) {
                 (Ok(mut sessions), Ok(mut sms_challenges)) => crate::router::handle_request(
                     request,
@@ -280,5 +293,36 @@ mod tests {
 
         assert!(!response.ok);
         assert!(!response.to_json().unwrap().contains("secret"));
+    }
+
+    #[test]
+    fn pipe_transport_rejects_empty_request_before_routing() {
+        let mut server = test_server();
+
+        let response = server.handle_request_bytes(b" \r\n\t ", Instant::now());
+
+        assert!(!response.ok);
+        assert_eq!(response.message, "IPC 请求为空");
+    }
+
+    #[test]
+    fn pipe_transport_rejects_oversized_request_before_decoding() {
+        let mut server = test_server();
+        let oversized = vec![b'a'; super::MAX_REQUEST_BYTES + 1];
+
+        let response = server.handle_request_bytes(&oversized, Instant::now());
+
+        assert!(!response.ok);
+        assert_eq!(response.message, "IPC 请求过大");
+    }
+
+    #[test]
+    fn pipe_transport_rejects_non_utf8_request() {
+        let mut server = test_server();
+
+        let response = server.handle_request_bytes(&[0xff, 0xfe, 0xfd], Instant::now());
+
+        assert!(!response.ok);
+        assert_eq!(response.message, "IPC 请求编码错误");
     }
 }
