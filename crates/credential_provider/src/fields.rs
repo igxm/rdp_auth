@@ -64,7 +64,8 @@ impl MfaField {
                 CPFG_CREDENTIAL_PROVIDER_LABEL,
             ),
             Self::AuthMethod => ("认证方式", CPFT_COMBOBOX, GUID::zeroed()),
-            Self::Phone => ("", CPFT_SMALL_TEXT, GUID::zeroed()),
+            // 手机号下拉框只展示脱敏值；真实手机号仍然只允许由 helper 内部持有和解析。
+            Self::Phone => ("手机号", CPFT_COMBOBOX, GUID::zeroed()),
             Self::SmsCode => ("短信验证码", CPFT_EDIT_TEXT, GUID::zeroed()),
             Self::SendSms => ("发送验证码", CPFT_COMMAND_LINK, GUID::zeroed()),
             Self::SecondPassword => ("二次密码", CPFT_PASSWORD_TEXT, GUID::zeroed()),
@@ -119,7 +120,7 @@ pub fn field_descriptor(index: u32) -> Result<*mut CREDENTIAL_PROVIDER_FIELD_DES
 #[cfg(test)]
 mod tests {
     use super::{FIELD_COUNT, MfaField};
-    use windows::Win32::UI::Shell::CPFT_SMALL_TEXT;
+    use windows::Win32::UI::Shell::CPFT_COMBOBOX;
 
     #[test]
     fn field_ids_cover_declared_count() {
@@ -130,9 +131,9 @@ mod tests {
     }
 
     #[test]
-    fn phone_field_is_display_text_not_input() {
+    fn phone_field_is_combobox_without_raw_phone_input() {
         let (_, field_type, _) = MfaField::Phone.descriptor();
 
-        assert_eq!(field_type, CPFT_SMALL_TEXT);
+        assert_eq!(field_type, CPFT_COMBOBOX);
     }
 }

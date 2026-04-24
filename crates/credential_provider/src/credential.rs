@@ -24,7 +24,7 @@ use crate::diagnostics::log_event;
 use crate::fields::MfaField;
 use crate::helper_client::{
     clear_current_session_state, log_clear_result, log_mark_result,
-    mark_current_session_authenticated,
+    mark_current_session_authenticated, send_sms_code_for_current_session,
 };
 use crate::memory::alloc_wide_string;
 use crate::session::disconnect_current_session;
@@ -294,7 +294,7 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
         _items: *mut u32,
         _selected_item: *mut u32,
     ) -> Result<()> {
-        if field_id != MfaField::AuthMethod as u32 {
+        if field_id != MfaField::AuthMethod as u32 && field_id != MfaField::Phone as u32 {
             return Err(Error::from_hresult(E_INVALIDARG));
         }
         if _items.is_null() || _selected_item.is_null() {
@@ -304,21 +304,32 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
         let state = self.state.lock().expect("credential state poisoned");
         unsafe {
             // SAFETY: 两个输出指针已做非空检查；认证方式列表来自归一化后的配置，至少有一个安全默认项。
-            *_items = state.available_auth_methods.len() as u32;
-            *_selected_item = auth_method_selected_index(&state);
+            if field_id == MfaField::AuthMethod as u32 {
+                *_items = state.available_auth_methods.len() as u32;
+                *_selected_item = auth_method_selected_index(&state);
+            } else {
+                *_items = state.phone_choices.len() as u32;
+                *_selected_item = phone_choice_selected_index(&state);
+            }
         }
         Ok(())
     }
 
     fn GetComboBoxValueAt(&self, field_id: u32, item: u32) -> Result<PWSTR> {
-        if field_id != MfaField::AuthMethod as u32 {
-            return Err(Error::from_hresult(E_INVALIDARG));
-        }
         let state = self.state.lock().expect("credential state poisoned");
-        let Some(method) = state.available_auth_methods.get(item as usize).copied() else {
-            return Err(Error::from_hresult(E_INVALIDARG));
-        };
-        alloc_wide_string(auth_method_label(method))
+        if field_id == MfaField::AuthMethod as u32 {
+            let Some(method) = state.available_auth_methods.get(item as usize).copied() else {
+                return Err(Error::from_hresult(E_INVALIDARG));
+            };
+            alloc_wide_string(auth_method_label(method))
+        } else if field_id == MfaField::Phone as u32 {
+            let Some(choice) = state.phone_choices.get(item as usize) else {
+                return Err(Error::from_hresult(E_INVALIDARG));
+            };
+            alloc_wide_string(&choice.masked)
+        } else {
+            Err(Error::from_hresult(E_INVALIDARG))
+        }
     }
 
     fn SetStringValue(&self, field_id: u32, value: &PCWSTR) -> Result<()> {
@@ -366,23 +377,38 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
     }
 
     fn SetComboBoxSelectedValue(&self, field_id: u32, selected_item: u32) -> Result<()> {
-        if field_id != MfaField::AuthMethod as u32 {
+        if field_id != MfaField::AuthMethod as u32 && field_id != MfaField::Phone as u32 {
             return Err(Error::from_hresult(E_INVALIDARG));
         }
-        let state_snapshot = self
-            .state
-            .lock()
-            .expect("credential state poisoned")
-            .clone();
-        let Some(method) = state_snapshot
+        let mut state = self.state.lock().expect("credential state poisoned");
+        if field_id == MfaField::Phone as u32 {
+            if !state.select_phone_choice(selected_item as usize) {
+                return Err(Error::from_hresult(E_INVALIDARG));
+            }
+            let selected_id = state
+                .selected_phone_choice_view()
+                .map(|choice| choice.id.as_str())
+                .unwrap_or_default()
+                .to_owned();
+            log_event(
+                "SetComboBoxSelectedValue",
+                format!(
+                    "selected_phone_choice={} selected_item={}",
+                    redact_choice_id_for_log(&selected_id),
+                    selected_item
+                ),
+            );
+            drop(state);
+            self.refresh_visible_fields()?;
+            return Ok(());
+        }
+        let Some(method) = state
             .available_auth_methods
             .get(selected_item as usize)
             .copied()
         else {
             return Err(Error::from_hresult(E_INVALIDARG));
         };
-
-        let mut state = self.state.lock().expect("credential state poisoned");
         state.selected_method = method;
         log_event(
             "SetComboBoxSelectedValue",
@@ -416,6 +442,19 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
                     );
                     return Ok(());
                 }
+                let timeout_ms = state.helper_ipc_timeout_ms;
+                let Some(phone_choice_id) = selected_phone_choice_id(&state).map(str::to_owned)
+                else {
+                    state.mfa_state = MfaState::Failed("手机号未配置，请联系管理员".to_owned());
+                    state.status_message = "手机号未配置，请联系管理员".to_owned();
+                    log_event(
+                        "CommandLinkClicked",
+                        "send_sms_rejected_missing_phone_choice",
+                    );
+                    drop(state);
+                    self.refresh_visible_fields()?;
+                    return Ok(());
+                };
                 // helper 接入前先只更新 UI 状态，不在 LogonUI 进程里做网络请求。CP DLL
                 // 被 LogonUI 加载，网络超时、TLS 初始化或服务端卡顿都会卡住登录界面；真实短信发送必须
                 // 放到 remote_auth helper，通过短超时 IPC 返回可展示结果，失败时按 fail closed 处理。
@@ -424,10 +463,27 @@ impl ICredentialProviderCredential_Impl for RdpMfaCredential_Impl {
                 log_event(
                     "CommandLinkClicked",
                     format!(
-                        "send_sms_mock remaining={remaining} generation={generation} extend_timeout={should_extend_timeout}"
+                        "send_sms_request choice_id={} remaining={remaining} generation={generation} extend_timeout={should_extend_timeout}",
+                        redact_choice_id_for_log(&phone_choice_id)
                     ),
                 );
                 drop(state);
+                if let Err(error) = send_sms_code_for_current_session(
+                    &phone_choice_id,
+                    Duration::from_millis(timeout_ms),
+                ) {
+                    let mut state = self.state.lock().expect("credential state poisoned");
+                    state.sms_resend_remaining = 0;
+                    state.mfa_state = MfaState::Failed("短信发送失败，请稍后重试".to_owned());
+                    state.status_message = "短信发送失败，请稍后重试".to_owned();
+                    log_event(
+                        "CommandLinkClicked",
+                        format!("send_sms_failed error={error}"),
+                    );
+                    drop(state);
+                    self.refresh_visible_fields()?;
+                    return Ok(());
+                }
                 if should_extend_timeout {
                     // 首次发送验证码后用户需要等待短信到达并输入验证码，因此只在这一刻把当前
                     // MFA 页面等待窗口延长为 5 分钟。后续重发不再刷新 generation，避免无限拖住 LogonUI。
@@ -671,6 +727,10 @@ fn auth_method_selected_index(state: &CredentialProviderState) -> u32 {
         .unwrap_or(0) as u32
 }
 
+fn phone_choice_selected_index(state: &CredentialProviderState) -> u32 {
+    state.selected_phone_choice as u32
+}
+
 fn auth_method_label(method: AuthMethod) -> &'static str {
     match method {
         AuthMethod::PhoneCode => "手机验证码",
@@ -693,6 +753,20 @@ fn apply_phone_field_input(
     state.phone_editable = false;
     PhoneFieldUpdate::RestoreDisplay {
         phone: state.phone.clone(),
+    }
+}
+
+fn selected_phone_choice_id(state: &CredentialProviderState) -> Option<&str> {
+    state
+        .selected_phone_choice_view()
+        .and_then(|choice| (!choice.id.is_empty()).then_some(choice.id.as_str()))
+}
+
+fn redact_choice_id_for_log(choice_id: &str) -> &str {
+    if choice_id.is_empty() {
+        "empty"
+    } else {
+        "present"
     }
 }
 
@@ -799,7 +873,8 @@ mod tests {
     use super::{MOCK_SECOND_PASSWORD, MOCK_SMS_CODE, prepare_send_sms_state, verify_mock_mfa};
     use super::{
         PhoneFieldUpdate, apply_phone_field_input, auth_method_index, auth_method_selected_index,
-        field_visibility, send_sms_label_owned,
+        field_visibility, phone_choice_selected_index, selected_phone_choice_id,
+        send_sms_label_owned,
     };
     use crate::fields::MfaField;
     use crate::state::CredentialProviderState;
@@ -854,11 +929,40 @@ mod tests {
         });
 
         assert_eq!(state.phone, "138****8888");
+        assert_eq!(state.phone_choices.len(), 1);
+        assert_eq!(phone_choice_selected_index(&state), 0);
         assert_eq!(field_visibility(MfaField::Phone, &state).1, CPFIS_NONE);
         assert_eq!(
             field_visibility(MfaField::SmsCode, &state).0,
             CPFS_DISPLAY_IN_SELECTED_TILE
         );
+    }
+
+    #[test]
+    fn selected_phone_choice_id_uses_non_sensitive_mapping_only() {
+        let mut state = CredentialProviderState::default();
+        state.apply_policy_snapshot(&PolicySnapshot {
+            auth_methods: vec![AuthMethod::PhoneCode],
+            phone_source: PhoneInputSource::Configured,
+            masked_phone: Some("138****8888".to_owned()),
+            phone_choices: vec![
+                auth_ipc::PhoneChoiceSnapshot {
+                    id: "phone-0".to_owned(),
+                    masked: "138****8888".to_owned(),
+                },
+                auth_ipc::PhoneChoiceSnapshot {
+                    id: "phone-1".to_owned(),
+                    masked: "139****9999".to_owned(),
+                },
+            ],
+            phone_editable: false,
+            mfa_timeout_seconds: 120,
+            sms_resend_seconds: 60,
+        });
+        state.select_phone_choice(1);
+
+        assert_eq!(state.phone, "139****9999");
+        assert_eq!(selected_phone_choice_id(&state), Some("phone-1"));
     }
 
     #[test]

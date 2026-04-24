@@ -18,6 +18,16 @@ use windows::core::GUID;
 use crate::diagnostics::log_event;
 use crate::serialization::{InboundSerialization, RemoteLogonCredential};
 
+/// CP 内部的手机号选择项。
+///
+/// 这里只允许保存 helper 下发的脱敏展示值和非敏感 choice id，避免把完整手机号重新带入
+/// LogonUI 进程，扩大日志、错误和字段回调的泄漏面。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PhoneChoiceView {
+    pub id: String,
+    pub masked: String,
+}
+
 /// 当前 Credential Provider 的 CLSID。
 ///
 /// 后续 `register_tool` 会把同一个 CLSID 写入系统 Credential Providers 注册表路径。
@@ -158,6 +168,8 @@ pub struct CredentialProviderState {
     pub available_auth_methods: Vec<AuthMethod>,
     /// 手机号展示值。Credential Provider 只保存 helper 下发的脱敏值，不再接收手动输入。
     pub phone: String,
+    pub phone_choices: Vec<PhoneChoiceView>,
+    pub selected_phone_choice: usize,
     /// 手机号字段是否允许用户编辑。保留字段用于兼容旧快照，但运行期始终收敛为不可编辑。
     pub phone_editable: bool,
     /// 短信验证码输入值。验证码属于敏感内容，只能保存在内存状态中。
@@ -209,6 +221,8 @@ impl Default for CredentialProviderState {
             selected_method,
             available_auth_methods,
             phone: String::new(),
+            phone_choices: Vec::new(),
+            selected_phone_choice: 0,
             phone_editable: false,
             sms_code: String::new(),
             second_password: String::new(),
@@ -245,12 +259,50 @@ impl CredentialProviderState {
         // 旧 helper 可能仍返回 `phone_editable=true`；CP 作为 LogonUI 边界必须本地兜底，
         // 不允许真实手机号重新进入 UI 输入字段或后续 IPC。
         self.phone_editable = false;
-        self.phone = snapshot
-            .masked_phone
-            .clone()
+        self.phone_choices = if snapshot.phone_choices.is_empty() {
+            snapshot
+                .masked_phone
+                .iter()
+                .cloned()
+                .map(|masked| PhoneChoiceView {
+                    // 兼容旧 helper 的单手机号快照时不虚构有效 id；后续发送短信会按空 id
+                    // fail closed，避免把旧快照误当成可用的明文手机号映射。
+                    id: String::new(),
+                    masked,
+                })
+                .collect()
+        } else {
+            snapshot
+                .phone_choices
+                .iter()
+                .map(|choice| PhoneChoiceView {
+                    id: choice.id.clone(),
+                    masked: choice.masked.clone(),
+                })
+                .collect()
+        };
+        if self.selected_phone_choice >= self.phone_choices.len() {
+            self.selected_phone_choice = 0;
+        }
+        self.phone = self
+            .selected_phone_choice_view()
+            .map(|choice| choice.masked.clone())
             .unwrap_or_else(|| "手机号未配置，请联系管理员".to_owned());
         self.mfa_timeout_seconds = snapshot.mfa_timeout_seconds;
         self.sms_resend_seconds = snapshot.sms_resend_seconds;
+    }
+
+    pub fn selected_phone_choice_view(&self) -> Option<&PhoneChoiceView> {
+        self.phone_choices.get(self.selected_phone_choice)
+    }
+
+    pub fn select_phone_choice(&mut self, selected_item: usize) -> bool {
+        let Some(choice) = self.phone_choices.get(selected_item) else {
+            return false;
+        };
+        self.selected_phone_choice = selected_item;
+        self.phone = choice.masked.clone();
+        true
     }
 }
 
@@ -260,8 +312,9 @@ mod tests {
     use auth_ipc::{PhoneInputSource, PolicySnapshot};
 
     use super::{
-        CredentialProviderState, RDP_MFA_PROVIDER_CLSID, remember_remote_source_provider,
-        take_remote_source_provider, write_remote_source_provider_handoff,
+        CredentialProviderState, PhoneChoiceView, RDP_MFA_PROVIDER_CLSID,
+        remember_remote_source_provider, take_remote_source_provider,
+        write_remote_source_provider_handoff,
     };
     use std::sync::Mutex;
     use windows::core::GUID;
@@ -321,6 +374,14 @@ mod tests {
         });
 
         assert_eq!(state.phone, "138****8888");
+        assert_eq!(
+            state.phone_choices,
+            vec![PhoneChoiceView {
+                id: "phone-0".to_owned(),
+                masked: "138****8888".to_owned()
+            }]
+        );
+        assert_eq!(state.selected_phone_choice, 0);
         assert!(!state.phone_editable);
         assert_eq!(state.available_auth_methods, vec![AuthMethod::PhoneCode]);
         assert_eq!(state.selected_method, AuthMethod::PhoneCode);
@@ -344,8 +405,64 @@ mod tests {
         });
 
         assert_eq!(state.phone, "手机号未配置，请联系管理员");
+        assert!(state.phone_choices.is_empty());
         assert!(!state.phone_editable);
         assert_eq!(state.selected_method, AuthMethod::SecondPassword);
+    }
+
+    #[test]
+    fn multi_phone_policy_snapshot_keeps_masked_choices_only() {
+        let mut state = CredentialProviderState::default();
+
+        state.apply_policy_snapshot(&PolicySnapshot {
+            auth_methods: vec![AuthMethod::PhoneCode],
+            phone_source: PhoneInputSource::Configured,
+            masked_phone: Some("138****8888".to_owned()),
+            phone_choices: vec![
+                auth_ipc::PhoneChoiceSnapshot {
+                    id: "phone-0".to_owned(),
+                    masked: "138****8888".to_owned(),
+                },
+                auth_ipc::PhoneChoiceSnapshot {
+                    id: "phone-1".to_owned(),
+                    masked: "139****9999".to_owned(),
+                },
+            ],
+            phone_editable: false,
+            mfa_timeout_seconds: 120,
+            sms_resend_seconds: 60,
+        });
+
+        assert_eq!(state.phone, "138****8888");
+        assert_eq!(state.phone_choices.len(), 2);
+        assert_eq!(state.phone_choices[1].id, "phone-1");
+        assert_eq!(state.phone_choices[1].masked, "139****9999");
+    }
+
+    #[test]
+    fn selecting_phone_choice_updates_masked_display_only() {
+        let mut state = CredentialProviderState::default();
+        state.phone_choices = vec![
+            PhoneChoiceView {
+                id: "phone-0".to_owned(),
+                masked: "138****8888".to_owned(),
+            },
+            PhoneChoiceView {
+                id: "phone-1".to_owned(),
+                masked: "139****9999".to_owned(),
+            },
+        ];
+        state.phone = "138****8888".to_owned();
+
+        assert!(state.select_phone_choice(1));
+        assert_eq!(state.selected_phone_choice, 1);
+        assert_eq!(state.phone, "139****9999");
+        assert_eq!(
+            state
+                .selected_phone_choice_view()
+                .map(|choice| choice.id.as_str()),
+            Some("phone-1")
+        );
     }
 
     #[test]

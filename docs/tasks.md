@@ -163,9 +163,9 @@
 - [x] helper 读取手机号模式：手机号字段显示 helper 返回的脱敏格式，例如 `138****8888`，并设置为不可编辑；Credential Provider 不接触真实手机号。
 - [x] 取消手动输入手机号模式；旧版 `phone.source = "input"` 仅作为导入兼容值，运行期归一化为配置手机号。
 - [x] 手机号配置无效时不允许进入发送短信流程，刷新状态提示为“手机号配置无效，请联系管理员”。
-- [ ] 设计多手机号选择框：Credential Provider 只显示 helper 下发的脱敏手机号列表，不接收、不保存、不回传完整手机号。
+- [x] 设计多手机号选择框：Credential Provider 只显示 helper 下发的脱敏手机号列表，不接收、不保存、不回传完整手机号。
 - [ ] Credential Provider 将手机号展示字段升级为选择框时，只保存选中索引、非敏感 `phone_choice_id` 和脱敏显示值；旧字段 ID 和 LogonUI 缓存行为需在 VM 中回归验证。
-- [ ] 多手机号选择变化后刷新发送短信按钮和状态提示；无可用手机号时禁用发送短信或返回“手机号配置无效，请联系管理员”，不得回退到手动输入。
+- [x] 多手机号选择变化后刷新发送短信按钮和状态提示；无可用手机号时禁用发送短信或返回“手机号配置无效，请联系管理员”，不得回退到手动输入。
 - [x] 删除底部重复状态区域，避免登录按钮下方再出现一块“第二部分”内容。
 - [x] 发送验证码后立即把按钮切换为禁用态，并显示 `重新发送(60)`。
 - [x] 实现短信验证码重新发送倒计时递减，并在 60 秒后恢复为可点击 `发送验证码`。（当前通过 LogonUI events 只刷新发送短信按钮；后续接入 helper 后可改为 helper 心跳驱动）
@@ -399,7 +399,7 @@
 - [x] 单元测试：`phone.numbers` 解析、归一化、去空、去重和 fallback 到旧 `phone.number`；号码合法性仍留给 helper 二次校验。
 - [x] 单元测试：多手机号策略快照只包含 `phone_choice_id` 和脱敏手机号，不包含完整手机号。
 - [x] 单元测试：`send_sms` / `verify_sms` 只携带 `phone_choice_id`，helper 用该 ID 映射完整手机号；未知 ID、空列表和非法配置都 fail closed。
-- [ ] 单元测试：Credential Provider 多手机号选择框只保存脱敏展示值和 `phone_choice_id`，选择变化不会把完整手机号写入状态或日志。
+- [x] 单元测试：Credential Provider 多手机号选择框只保存脱敏展示值和 `phone_choice_id`，选择变化不会把完整手机号写入状态或日志。
 - [x] 单元测试：本机内网 IP 枚举会过滤 loopback、link-local、公网地址和明显无效地址，并保留多网卡有效内网地址。
 - [ ] 单元测试：公网 IP 获取失败时按策略返回 `unknown` 或 fail closed。
 - [x] 单元测试：审计日志字段序列化包含 client_ip、host_public_ip、host_private_ips、host_uuid、session_id，且不包含手机号、验证码、密码、token。
