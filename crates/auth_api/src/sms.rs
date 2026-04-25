@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{ApiError, AuthApiClient, Result, SmsChallenge};
 use crate::models::BasicResponseEnvelope;
+use crate::{ApiError, AuthApiClient, Result, SmsChallenge};
 
 const SEND_SMS_PATH: &str = "/api/host_instance/getSSHLoginCode";
 // 当前仓库里只有短信发送接口路径有旧实现线索，校验路径还没有正式后端契约。
