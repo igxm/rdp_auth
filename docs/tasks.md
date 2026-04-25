@@ -42,7 +42,7 @@
 ### P1：helper 审计与上下文
 
 - [x] 登录审计中的公网 / 内网 IP 输出受 `audit.ip_logging = full|masked|off` 控制
-- [ ] RDP 客户端 IP 的 VM 场景验证
+- [ ] RDP 客户端 IP 的 VM 场景验证（见 [docs/rdp-client-ip-vm-test.md](E:/Developers/rdp_auth/docs/rdp-client-ip-vm-test.md)）
 - [ ] 审计上下文是否还需要扩展额外后端要求字段
 - [ ] `api.require_public_ip_for_sms` 是否升级为真正的短信强约束策略
 
