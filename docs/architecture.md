@@ -68,7 +68,7 @@ Credential Provider Tile 已经预留以下二次认证字段：
 
 配置手机号模式下，手机号字段只展示 helper 返回的脱敏值。由于 LogonUI 对 `READONLY` 文本框的处理并不总是阻止临时输入，Credential Provider 收到只读手机号字段的写入回调时会立即恢复显示值，状态中仍只保留脱敏号码。
 
-当前 UI 骨架已经通过 helper 接入短信发送、短信校验和二次密码校验；默认占位服务地址下 helper 会保留 mock fallback，保证在正式后端联调前仍可验证主链路。fail closed 放行策略已经按 helper 响应收敛，后续主要剩真实后端联调和审计上报补齐。
+当前 UI 骨架已经通过 helper 接入短信发送、短信校验、二次密码校验和登录日志上报；默认占位服务地址下 helper 会保留 mock fallback 或本地 success fallback，保证在正式后端联调前仍可验证主链路。fail closed 放行策略已经按 helper 响应收敛，后续主要剩真实后端联调和公网 IP / 审计上下文补齐。
 
 ## Mock 认证阶段
 

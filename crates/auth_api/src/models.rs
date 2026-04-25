@@ -11,6 +11,22 @@ pub struct SmsChallenge {
     pub resend_after_seconds: u64,
 }
 
+/// helper 传给 `auth_api` 的脱敏登录审计记录。
+///
+/// 这里刻意只允许放脱敏后的上下文，避免 helper 在调用真实上报接口时顺手把验证码、
+/// 完整手机号或其它敏感输入带到请求模型里。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoginAuditRecord {
+    pub request_id: String,
+    pub session_id: u32,
+    pub client_ip: String,
+    pub host_public_ip: String,
+    pub host_private_ips: Vec<String>,
+    pub host_uuid: String,
+    pub auth_method: String,
+    pub success: bool,
+}
+
 /// 基础布尔响应 envelope 先抽成稳定模型，后续短信校验、二次密码、登录日志都可以复用，
 /// 避免每个接口各自复制一份 `ok + code` 解析结构。
 #[derive(Debug, Deserialize)]

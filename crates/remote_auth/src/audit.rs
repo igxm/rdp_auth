@@ -1,7 +1,9 @@
 //! helper 侧登录审计入口。
 //!
-//! 真实 `postSSHLoginLog` 接口接入前，这里先把 IPC 请求收口为一条脱敏结构化日志。这样 CP
-//! 可以尽早按同一协议调用 helper，同时真实 HTTP 上报失败策略仍保留在后续 API 任务中实现。
+//! 审计日志先在 helper 内部统一做脱敏，再决定是写本地诊断日志还是上报到真实服务端，
+//! 避免 CP 或 IPC 直接知道审计 HTTP 形状。
+use auth_api::{ApiError as AuthApiError, AuthApiClient, LoginAuditRecord};
+use auth_config::AppConfig;
 use auth_core::AuthMethod;
 use auth_ipc::IpcResponse;
 use tracing::info;
@@ -58,10 +60,67 @@ pub struct AuditLogFields {
     pub method: String,
 }
 
+trait LoginLogApi {
+    fn post_login_log(&self, record: &LoginAuditRecord) -> Result<(), AuthApiError>;
+}
+
+impl LoginLogApi for AuthApiClient {
+    fn post_login_log(&self, record: &LoginAuditRecord) -> Result<(), AuthApiError> {
+        AuthApiClient::post_login_log(self, record)
+    }
+}
+
 pub fn handle_post_login_log(session_id: u32, method: AuthMethod, success: bool) -> IpcResponse {
+    let config = auth_config::load_app_config();
+    let api_client = match AuthApiClient::new(config.api.clone()) {
+        Ok(client) => Some(client),
+        Err(error) => {
+            info!(
+                target: "remote_auth",
+                event = "login_log_api_client_invalid",
+                session_id,
+                reason = error.diagnostic_code(),
+                "helper 无法初始化登录日志 API 客户端"
+            );
+            None
+        }
+    };
+    handle_post_login_log_with_api(session_id, method, success, &config, api_client.as_ref())
+}
+
+fn handle_post_login_log_with_api(
+    session_id: u32,
+    method: AuthMethod,
+    success: bool,
+    config: &AppConfig,
+    api: Option<&impl LoginLogApi>,
+) -> IpcResponse {
     let context = AuditContext::for_mfa_request(session_id, method);
     let fields = context.sanitized_fields();
     let result = if success { "success" } else { "failure" };
+    if !config.audit.post_login_log {
+        info!(
+            target: "remote_auth",
+            event = "login_log_skipped",
+            request_id = %fields.request_id,
+            session_id = fields.session_id,
+            reason = "audit_disabled",
+            "登录日志上报已关闭，helper 跳过远端上报"
+        );
+        return IpcResponse::success("登录日志已跳过");
+    }
+
+    let record = LoginAuditRecord {
+        request_id: fields.request_id.clone(),
+        session_id: fields.session_id,
+        client_ip: fields.client_ip.clone(),
+        host_public_ip: fields.host_public_ip.clone(),
+        host_private_ips: fields.host_private_ips.clone(),
+        host_uuid: fields.host_uuid.clone(),
+        auth_method: fields.method.clone(),
+        success,
+    };
+
     info!(
         target: "remote_auth",
         event = "login_log_recorded",
@@ -75,7 +134,25 @@ pub fn handle_post_login_log(session_id: u32, method: AuthMethod, success: bool)
         result,
         "登录日志 mock 已记录"
     );
-    IpcResponse::success("登录日志已记录")
+
+    match api {
+        Some(client) => match client.post_login_log(&record) {
+            Ok(()) => IpcResponse::success("登录日志已记录"),
+            Err(AuthApiError::NotImplemented { .. }) => IpcResponse::success("登录日志已记录"),
+            Err(error) => {
+                info!(
+                    target: "remote_auth",
+                    event = "login_log_upload_failed",
+                    request_id = %fields.request_id,
+                    session_id = fields.session_id,
+                    reason = error.diagnostic_code(),
+                    "helper 登录日志远端上报失败"
+                );
+                IpcResponse::failure(error.user_message())
+            }
+        },
+        None => IpcResponse::failure("认证服务配置无效，请联系管理员"),
+    }
 }
 
 fn auth_method_name(method: AuthMethod) -> &'static str {
@@ -102,8 +179,52 @@ fn sanitize_audit_field(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{AuditContext, auth_method_name, handle_post_login_log};
+    use std::sync::{Arc, Mutex};
+
+    use auth_api::ApiError;
+    use auth_config::AppConfig;
+
+    use super::{
+        AuditContext, LoginLogApi, auth_method_name, handle_post_login_log,
+        handle_post_login_log_with_api,
+    };
     use auth_core::AuthMethod;
+
+    #[derive(Clone)]
+    struct FakeLoginLogApi {
+        calls: Arc<Mutex<Vec<auth_api::LoginAuditRecord>>>,
+        result: Result<(), ApiError>,
+    }
+
+    impl FakeLoginLogApi {
+        fn success() -> Self {
+            Self {
+                calls: Arc::new(Mutex::new(Vec::new())),
+                result: Ok(()),
+            }
+        }
+
+        fn reject(result: ApiError) -> Self {
+            Self {
+                calls: Arc::new(Mutex::new(Vec::new())),
+                result: Err(result),
+            }
+        }
+
+        fn calls(&self) -> Vec<auth_api::LoginAuditRecord> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl LoginLogApi for FakeLoginLogApi {
+        fn post_login_log(
+            &self,
+            record: &auth_api::LoginAuditRecord,
+        ) -> Result<(), auth_api::ApiError> {
+            self.calls.lock().unwrap().push(record.clone());
+            self.result.clone()
+        }
+    }
 
     #[test]
     fn post_login_log_returns_mock_success_without_payload() {
@@ -112,6 +233,84 @@ mod tests {
         assert!(response.ok);
         assert_eq!(response.message, "登录日志已记录");
         assert_eq!(response.payload, None);
+    }
+
+    #[test]
+    fn post_login_log_can_be_disabled_by_config() {
+        let original = AppConfig::default();
+        let disabled = AppConfig {
+            audit: auth_config::AuditConfig {
+                post_login_log: false,
+                ..original.audit.clone()
+            },
+            ..original
+        };
+        let response = handle_post_login_log_with_api(
+            7,
+            AuthMethod::PhoneCode,
+            true,
+            &disabled,
+            None::<&FakeLoginLogApi>,
+        );
+
+        assert!(response.ok);
+        assert_eq!(response.message, "登录日志已跳过");
+    }
+
+    #[test]
+    fn post_login_log_uses_auth_api_when_available() {
+        let api = FakeLoginLogApi::success();
+        let response = handle_post_login_log_with_api(
+            7,
+            AuthMethod::PhoneCode,
+            true,
+            &AppConfig::default(),
+            Some(&api),
+        );
+
+        assert!(response.ok);
+        let calls = api.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].request_id, "mfa-7-phone_code");
+        assert_eq!(calls[0].auth_method, "phone_code");
+        assert!(calls[0].success);
+    }
+
+    #[test]
+    fn post_login_log_falls_back_to_local_success_when_not_implemented() {
+        let api = FakeLoginLogApi::reject(ApiError::NotImplemented {
+            operation: "post_login_log",
+        });
+
+        let response = handle_post_login_log_with_api(
+            7,
+            AuthMethod::PhoneCode,
+            true,
+            &AppConfig::default(),
+            Some(&api),
+        );
+
+        assert!(response.ok);
+        assert_eq!(response.message, "登录日志已记录");
+    }
+
+    #[test]
+    fn post_login_log_maps_api_errors_to_safe_failure() {
+        let api = FakeLoginLogApi::reject(ApiError::HttpStatus { status: 503 });
+
+        let response = handle_post_login_log_with_api(
+            7,
+            AuthMethod::PhoneCode,
+            false,
+            &AppConfig::default(),
+            Some(&api),
+        );
+
+        assert!(!response.ok);
+        assert_eq!(
+            response.message,
+            "认证服务暂时不可用，请稍后重试或联系管理员"
+        );
     }
 
     #[test]

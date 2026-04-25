@@ -28,7 +28,7 @@
 - [x] helper 内存态短信 challenge
 - [ ] 真实短信 API challenge 接入（真实后端待联调，当前已完成 HTTP 逻辑和 mock 服务验证）
 - [ ] 二次密码真实 API 接入（真实后端待联调，当前已完成 HTTP 逻辑、helper 接入和 mock 服务验证）
-- [ ] 审计上报真实 API 接入
+- [ ] 审计上报真实 API 接入（真实后端待联调，当前已完成 HTTP 逻辑、helper 接入和 mock 服务验证）
 
 ## 3. 近期待办
 
@@ -51,7 +51,7 @@
 ### P2：真实业务能力
 
 - [x] 二次密码已改为 helper -> `auth_api`，默认占位配置继续保留 mock fallback
-- [ ] 登录日志上报改为 helper -> `auth_api`
+- [x] 登录日志上报已改为 helper -> `auth_api`，默认占位配置继续保留本地 success fallback
 - [ ] 远程配置拉取、缓存、完整性校验
 - [ ] 远程配置缓存 `.enc` 落盘
 
@@ -65,7 +65,7 @@
 - [x] 将二次密码请求/响应和实现拆到 `second_password.rs`
 - [x] 将 mock HTTP server 和请求捕获工具拆到 `test_support.rs`
 - [x] `lib.rs` 只保留模块声明和必要 `pub use`
-- [ ] 拆分后保持 crate 边界不变：`auth_api` 只封装真实服务端 API，不读 CP 状态、注册表或 helper 内存状态
+- [x] 拆分后保持 crate 边界不变：`auth_api` 只封装真实服务端 API，不读 CP 状态、注册表或 helper 内存状态
 
 ### P3：安装与运维
 
@@ -81,9 +81,11 @@
 - [ ] MFA timeout generation 与 missing-serialization generation 的独立性边界
 - [x] `auth_api` mock 服务下的真实 HTTP `send_sms` / `verify_sms`
 - [x] `auth_api` mock 服务下的真实 HTTP `verify_second_password`
+- [x] `auth_api` mock 服务下的真实 HTTP `post_login_log`
 - [ ] `auth_api` 模块拆分后保持现有 mock HTTP 测试覆盖不回退
 - [ ] helper 接真实后端联调下的 `send_sms` / `verify_sms`
 - [ ] helper 接真实后端联调下的 `verify_second_password`
+- [ ] helper 接真实后端联调下的 `post_login_log`
 
 ### 集成测试
 
@@ -138,9 +140,9 @@
 - [x] `auth_api` 形状改为 `send_sms -> challenge`、`verify_sms -> challenge_token + code`
 - [x] `verify_sms` 已优先走 helper 内存态 `challenge_token + code`
 
-### M5：待整理代码热点
+### M5：`auth_api` 分层整理
 
-- [ ] `auth_api` 当前已具备真实 HTTP + mock 服务测试，但 `lib.rs` 仍混合 client / transport / 业务接口 / 模型 / 测试工具，需要按模块拆分
+- [x] `auth_api` 已按 client / transport / sms / second_password / login_log / tests 拆分，`lib.rs` 只保留入口导出
 
 ## 6. 暂不处理
 

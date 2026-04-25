@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use crate::test_support::MockHttpServer;
-use crate::{ApiError, AuthApiClient, SmsChallenge};
+use crate::{ApiError, AuthApiClient, LoginAuditRecord, SmsChallenge};
 use auth_config::ApiConfig;
 use serde_json::json;
 use std::time::Duration;
@@ -182,7 +182,9 @@ fn non_success_http_status_maps_to_http_error() {
     })
     .unwrap();
 
-    let error = client.verify_sms_code("opaque-token", "123456").unwrap_err();
+    let error = client
+        .verify_sms_code("opaque-token", "123456")
+        .unwrap_err();
 
     assert_eq!(error, ApiError::HttpStatus { status: 503 });
     let request = server.finish();
@@ -219,6 +221,37 @@ fn verify_second_password_rejected_response_maps_to_safe_error() {
 }
 
 #[test]
+fn post_login_log_posts_real_json_and_accepts_ok_response() {
+    let server = MockHttpServer::serve_once(200, json!({ "ok": true }));
+    let client = AuthApiClient::new(ApiConfig {
+        base_url: server.base_url(),
+        public_ip_endpoint: format!("{}/ip", server.base_url()),
+        ..Default::default()
+    })
+    .unwrap();
+    let record = LoginAuditRecord {
+        request_id: "mfa-7-phone_code".to_owned(),
+        session_id: 7,
+        client_ip: "unknown".to_owned(),
+        host_public_ip: "unknown".to_owned(),
+        host_private_ips: vec!["192.168.1.8".to_owned()],
+        host_uuid: "host-uuid-001".to_owned(),
+        auth_method: "phone_code".to_owned(),
+        success: true,
+    };
+
+    client.post_login_log(&record).unwrap();
+    let request = server.finish();
+
+    assert_eq!(request.method, "POST");
+    assert_eq!(request.path, "/api/host_instance/postSSHLoginLog");
+    assert_eq!(request.json_body["request_id"], "mfa-7-phone_code");
+    assert_eq!(request.json_body["session_id"], 7);
+    assert_eq!(request.json_body["auth_method"], "phone_code");
+    assert_eq!(request.json_body["success"], true);
+}
+
+#[test]
 fn malformed_response_maps_to_parse_error_without_echoing_phone() {
     let server = MockHttpServer::serve_once_raw(
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 1\r\nConnection: close\r\n\r\n{"
@@ -240,8 +273,55 @@ fn malformed_response_maps_to_parse_error_without_echoing_phone() {
 }
 
 #[test]
+fn post_login_log_rejected_response_maps_to_safe_error() {
+    let server = MockHttpServer::serve_once(
+        200,
+        json!({
+            "ok": false,
+            "code": "audit_rejected"
+        }),
+    );
+    let client = AuthApiClient::new(ApiConfig {
+        base_url: server.base_url(),
+        public_ip_endpoint: format!("{}/ip", server.base_url()),
+        ..Default::default()
+    })
+    .unwrap();
+    let record = LoginAuditRecord {
+        request_id: "mfa-7-phone_code".to_owned(),
+        session_id: 7,
+        client_ip: "unknown".to_owned(),
+        host_public_ip: "unknown".to_owned(),
+        host_private_ips: vec!["192.168.1.8".to_owned()],
+        host_uuid: "host-uuid-001".to_owned(),
+        auth_method: "phone_code".to_owned(),
+        success: false,
+    };
+
+    let error = client.post_login_log(&record).unwrap_err();
+
+    assert_eq!(
+        error,
+        ApiError::ServerRejected {
+            code: "audit_rejected".to_owned()
+        }
+    );
+    assert_eq!(error.user_message(), "二次认证未通过");
+}
+
+#[test]
 fn placeholder_default_service_keeps_mock_fallback_contract() {
     let client = AuthApiClient::new(ApiConfig::default()).unwrap();
+    let record = LoginAuditRecord {
+        request_id: "mfa-7-phone_code".to_owned(),
+        session_id: 7,
+        client_ip: "unknown".to_owned(),
+        host_public_ip: "unknown".to_owned(),
+        host_private_ips: vec!["192.168.1.8".to_owned()],
+        host_uuid: "host-uuid-001".to_owned(),
+        auth_method: "phone_code".to_owned(),
+        success: true,
+    };
 
     assert_eq!(
         client.send_sms_code("13812348888").unwrap_err(),
@@ -250,7 +330,9 @@ fn placeholder_default_service_keeps_mock_fallback_contract() {
         }
     );
     assert_eq!(
-        client.verify_sms_code("opaque-token", "123456").unwrap_err(),
+        client
+            .verify_sms_code("opaque-token", "123456")
+            .unwrap_err(),
         ApiError::NotImplemented {
             operation: "verify_sms_code"
         }
@@ -259,6 +341,12 @@ fn placeholder_default_service_keeps_mock_fallback_contract() {
         client.verify_second_password("mock-password").unwrap_err(),
         ApiError::NotImplemented {
             operation: "verify_second_password"
+        }
+    );
+    assert_eq!(
+        client.post_login_log(&record).unwrap_err(),
+        ApiError::NotImplemented {
+            operation: "post_login_log"
         }
     );
 }
