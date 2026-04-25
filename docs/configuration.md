@@ -108,7 +108,8 @@ diagnostic_level = "info"
   - `full`：记录完整 IP
   - `masked`：IPv4 保留前三段、IPv6 保留前四段
   - `off`：不输出 IP 列表，单值字段回退 `unknown`
-- `api.require_public_ip_for_sms` 仍保留给短信链路后续接入使用；当前已生效的是登录审计上下文，不会因为公网 IP 查询失败阻断登录日志 mock / fallback 路径。
+- `send_sms` / `verify_sms` / `post_login_log` 当前都会携带 helper 生成的脱敏 host 审计上下文；公网 IP 查询失败时统一回退 `unknown`，不会因为这一步失败而把占位服务 / mock fallback 误判成认证成功。
+- `api.require_public_ip_for_sms` 仍保留给更严格的短信策略后续接入使用；当前实现只做安全降级，不因为公网 IP 查询失败直接放行或泄漏原始错误。
 
 ## 多手机号选择框方案（后续）
 

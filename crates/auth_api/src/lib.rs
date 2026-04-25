@@ -19,7 +19,7 @@ mod transport;
 
 pub use client::AuthApiClient;
 pub use error::ApiError;
-pub use models::{LoginAuditRecord, SmsChallenge};
+pub use models::{LoginAuditRecord, SmsAuditContext, SmsChallenge};
 
 pub type Result<T> = std::result::Result<T, ApiError>;
 pub type Error = ApiError;

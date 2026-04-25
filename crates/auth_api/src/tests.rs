@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use crate::test_support::MockHttpServer;
-use crate::{ApiError, AuthApiClient, LoginAuditRecord, SmsChallenge};
+use crate::{ApiError, AuthApiClient, LoginAuditRecord, SmsAuditContext, SmsChallenge};
 use auth_config::ApiConfig;
 use serde_json::json;
 use std::time::Duration;
@@ -71,6 +71,17 @@ fn sms_challenge_shape_is_stable_for_helper_memory_state() {
     assert_eq!(challenge.resend_after_seconds, 60);
 }
 
+fn sample_sms_context() -> SmsAuditContext {
+    SmsAuditContext {
+        request_id: "mfa-7-phone_code".to_owned(),
+        session_id: 7,
+        client_ip: "unknown".to_owned(),
+        host_public_ip: "unknown".to_owned(),
+        host_private_ips: vec!["192.168.1.*".to_owned()],
+        host_uuid: "host-uuid-001".to_owned(),
+    }
+}
+
 #[test]
 fn send_sms_code_posts_real_json_and_parses_challenge() {
     let server = MockHttpServer::serve_once(
@@ -89,13 +100,19 @@ fn send_sms_code_posts_real_json_and_parses_challenge() {
     })
     .unwrap();
 
-    let challenge = client.send_sms_code("13812348888").unwrap();
+    let challenge = client
+        .send_sms_code("13812348888", &sample_sms_context())
+        .unwrap();
     let request = server.finish();
 
     assert_eq!(request.method, "POST");
     assert_eq!(request.path, "/api/host_instance/getSSHLoginCode");
     assert_eq!(request.json_body["phone"], "13812348888");
-    assert!(request.json_body.get("host_uuid").is_none());
+    assert_eq!(request.json_body["request_id"], "mfa-7-phone_code");
+    assert_eq!(request.json_body["session_id"], 7);
+    assert_eq!(request.json_body["client_ip"], "unknown");
+    assert_eq!(request.json_body["host_public_ip"], "unknown");
+    assert_eq!(request.json_body["host_uuid"], "host-uuid-001");
     assert_eq!(
         challenge,
         SmsChallenge {
@@ -116,13 +133,17 @@ fn verify_sms_code_posts_real_json_and_accepts_ok_response() {
     })
     .unwrap();
 
-    client.verify_sms_code("opaque-token", "123456").unwrap();
+    client
+        .verify_sms_code("opaque-token", "123456", &sample_sms_context())
+        .unwrap();
     let request = server.finish();
 
     assert_eq!(request.method, "POST");
     assert_eq!(request.path, "/api/host_instance/verifySSHLoginCode");
     assert_eq!(request.json_body["challenge_token"], "opaque-token");
     assert_eq!(request.json_body["code"], "123456");
+    assert_eq!(request.json_body["request_id"], "mfa-7-phone_code");
+    assert_eq!(request.json_body["host_uuid"], "host-uuid-001");
 }
 
 #[test]
@@ -159,7 +180,9 @@ fn server_rejected_response_maps_to_safe_error() {
     })
     .unwrap();
 
-    let error = client.send_sms_code("13812348888").unwrap_err();
+    let error = client
+        .send_sms_code("13812348888", &sample_sms_context())
+        .unwrap_err();
 
     assert_eq!(
         error,
@@ -183,7 +206,7 @@ fn non_success_http_status_maps_to_http_error() {
     .unwrap();
 
     let error = client
-        .verify_sms_code("opaque-token", "123456")
+        .verify_sms_code("opaque-token", "123456", &sample_sms_context())
         .unwrap_err();
 
     assert_eq!(error, ApiError::HttpStatus { status: 503 });
@@ -321,7 +344,9 @@ fn malformed_response_maps_to_parse_error_without_echoing_phone() {
     })
     .unwrap();
 
-    let error = client.send_sms_code("13812348888").unwrap_err();
+    let error = client
+        .send_sms_code("13812348888", &sample_sms_context())
+        .unwrap_err();
 
     assert_eq!(error, ApiError::ResponseParse);
     assert!(!error.to_string().contains("13812348888"));
@@ -381,14 +406,16 @@ fn placeholder_default_service_keeps_mock_fallback_contract() {
     };
 
     assert_eq!(
-        client.send_sms_code("13812348888").unwrap_err(),
+        client
+            .send_sms_code("13812348888", &sample_sms_context())
+            .unwrap_err(),
         ApiError::NotImplemented {
             operation: "send_sms_code"
         }
     );
     assert_eq!(
         client
-            .verify_sms_code("opaque-token", "123456")
+            .verify_sms_code("opaque-token", "123456", &sample_sms_context())
             .unwrap_err(),
         ApiError::NotImplemented {
             operation: "verify_sms_code"

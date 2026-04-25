@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::models::BasicResponseEnvelope;
-use crate::{ApiError, AuthApiClient, Result, SmsChallenge};
+use crate::{ApiError, AuthApiClient, Result, SmsAuditContext, SmsChallenge};
 
 const SEND_SMS_PATH: &str = "/api/host_instance/getSSHLoginCode";
 // 当前仓库里只有短信发送接口路径有旧实现线索，校验路径还没有正式后端契约。
@@ -13,7 +13,7 @@ impl AuthApiClient {
     ///
     /// 这里保留完整手机号入参，是因为 helper -> 后端仍需要按真实手机号发起发送请求；
     /// `challenge_token` 不会从这里返回到 CP/IPC，只会留在 helper 内存态。
-    pub fn send_sms_code(&self, phone: &str) -> Result<SmsChallenge> {
+    pub fn send_sms_code(&self, phone: &str, context: &SmsAuditContext) -> Result<SmsChallenge> {
         if self.uses_placeholder_service() {
             return Err(ApiError::NotImplemented {
                 operation: "send_sms_code",
@@ -24,7 +24,12 @@ impl AuthApiClient {
                 SEND_SMS_PATH,
                 &SendSmsRequest {
                     phone,
-                    host_uuid: None,
+                    request_id: &context.request_id,
+                    session_id: context.session_id,
+                    client_ip: &context.client_ip,
+                    host_public_ip: &context.host_public_ip,
+                    host_private_ips: &context.host_private_ips,
+                    host_uuid: &context.host_uuid,
                 },
             )?
             .json::<SendSmsEnvelope>()
@@ -55,7 +60,12 @@ impl AuthApiClient {
     }
 
     /// 校验短信验证码。固定使用 `challenge_token + code`，不再重复把手机号传给后端。
-    pub fn verify_sms_code(&self, challenge_token: &str, code: &str) -> Result<()> {
+    pub fn verify_sms_code(
+        &self,
+        challenge_token: &str,
+        code: &str,
+        context: &SmsAuditContext,
+    ) -> Result<()> {
         if self.uses_placeholder_service() {
             return Err(ApiError::NotImplemented {
                 operation: "verify_sms_code",
@@ -67,6 +77,12 @@ impl AuthApiClient {
                 &VerifySmsRequest {
                     challenge_token,
                     code,
+                    request_id: &context.request_id,
+                    session_id: context.session_id,
+                    client_ip: &context.client_ip,
+                    host_public_ip: &context.host_public_ip,
+                    host_private_ips: &context.host_private_ips,
+                    host_uuid: &context.host_uuid,
                 },
             )?
             .json::<BasicResponseEnvelope>()
@@ -87,14 +103,24 @@ impl AuthApiClient {
 #[derive(Debug, Serialize)]
 struct SendSmsRequest<'a> {
     phone: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    host_uuid: Option<&'a str>,
+    request_id: &'a str,
+    session_id: u32,
+    client_ip: &'a str,
+    host_public_ip: &'a str,
+    host_private_ips: &'a [String],
+    host_uuid: &'a str,
 }
 
 #[derive(Debug, Serialize)]
 struct VerifySmsRequest<'a> {
     challenge_token: &'a str,
     code: &'a str,
+    request_id: &'a str,
+    session_id: u32,
+    client_ip: &'a str,
+    host_public_ip: &'a str,
+    host_private_ips: &'a [String],
+    host_uuid: &'a str,
 }
 
 #[derive(Debug, Deserialize)]

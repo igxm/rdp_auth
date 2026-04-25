@@ -27,6 +27,20 @@ pub struct LoginAuditRecord {
     pub success: bool,
 }
 
+/// helper 传给短信 API 的脱敏上下文。
+///
+/// 这里不包含完整手机号、验证码或 challenge_token；这些敏感值分别只留在 helper 的手机号映射、
+/// verify 请求体和 challenge 内存态里，避免把短信请求骨架变成新的泄漏面。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SmsAuditContext {
+    pub request_id: String,
+    pub session_id: u32,
+    pub client_ip: String,
+    pub host_public_ip: String,
+    pub host_private_ips: Vec<String>,
+    pub host_uuid: String,
+}
+
 /// 基础布尔响应 envelope 先抽成稳定模型，后续短信校验、二次密码、登录日志都可以复用，
 /// 避免每个接口各自复制一份 `ok + code` 解析结构。
 #[derive(Debug, Deserialize)]

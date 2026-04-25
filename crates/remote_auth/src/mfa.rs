@@ -6,10 +6,12 @@
 
 use std::time::{Duration, Instant};
 
-use auth_api::{AuthApiClient, Error as AuthApiError, SmsChallenge};
+use auth_api::{AuthApiClient, Error as AuthApiError, SmsAuditContext, SmsChallenge};
+use auth_core::AuthMethod;
 use auth_ipc::IpcResponse;
 use tracing::info;
 
+use crate::audit::build_mfa_audit_fields;
 use crate::policy::PolicyContext;
 use crate::session_challenge::{SmsChallengeState, VerifyChallengeError};
 
@@ -17,11 +19,20 @@ const MOCK_SMS_CODE: &str = "123456";
 const MOCK_SECOND_PASSWORD: &str = "mock-password";
 
 trait SmsVerifyApi {
-    fn verify_sms_code(&self, challenge_token: &str, code: &str) -> Result<(), AuthApiError>;
+    fn verify_sms_code(
+        &self,
+        challenge_token: &str,
+        code: &str,
+        context: &SmsAuditContext,
+    ) -> Result<(), AuthApiError>;
 }
 
 trait SmsSendApi {
-    fn send_sms_code(&self, phone: &str) -> Result<SmsChallenge, AuthApiError>;
+    fn send_sms_code(
+        &self,
+        phone: &str,
+        context: &SmsAuditContext,
+    ) -> Result<SmsChallenge, AuthApiError>;
 }
 
 trait SecondPasswordApi {
@@ -29,14 +40,23 @@ trait SecondPasswordApi {
 }
 
 impl SmsVerifyApi for AuthApiClient {
-    fn verify_sms_code(&self, challenge_token: &str, code: &str) -> Result<(), AuthApiError> {
-        AuthApiClient::verify_sms_code(self, challenge_token, code)
+    fn verify_sms_code(
+        &self,
+        challenge_token: &str,
+        code: &str,
+        context: &SmsAuditContext,
+    ) -> Result<(), AuthApiError> {
+        AuthApiClient::verify_sms_code(self, challenge_token, code, context)
     }
 }
 
 impl SmsSendApi for AuthApiClient {
-    fn send_sms_code(&self, phone: &str) -> Result<SmsChallenge, AuthApiError> {
-        AuthApiClient::send_sms_code(self, phone)
+    fn send_sms_code(
+        &self,
+        phone: &str,
+        context: &SmsAuditContext,
+    ) -> Result<SmsChallenge, AuthApiError> {
+        AuthApiClient::send_sms_code(self, phone, context)
     }
 }
 
@@ -70,6 +90,7 @@ pub fn handle_send_sms(
             None
         }
     };
+    let sms_context = build_sms_audit_context(session_id, &config, api_client.as_ref());
     handle_send_sms_with_api(
         session_id,
         phone_choice_id,
@@ -77,6 +98,7 @@ pub fn handle_send_sms(
         policy,
         sms_challenges,
         now,
+        &sms_context,
         api_client.as_ref(),
     )
 }
@@ -88,6 +110,7 @@ fn handle_send_sms_with_api(
     policy: &PolicyContext,
     sms_challenges: &mut SmsChallengeState,
     now: Instant,
+    sms_context: &SmsAuditContext,
     api: Option<&impl SmsSendApi>,
 ) -> IpcResponse {
     info!(
@@ -114,7 +137,7 @@ fn handle_send_sms_with_api(
 
     match resolve_configured_phone(phone_choice_id, policy) {
         Ok(phone) => match api {
-            Some(api) => match api.send_sms_code(&phone) {
+            Some(api) => match api.send_sms_code(&phone, sms_context) {
                 Ok(challenge) => {
                     // challenge_token 属于服务端敏感凭据，只允许保存在 helper 内存态。
                     // 这里一旦拿到真实 challenge，就用服务端 TTL 覆盖本地 mock TTL。
@@ -226,6 +249,7 @@ pub fn handle_verify_sms(
             None
         }
     };
+    let sms_context = build_sms_audit_context(session_id, &config, api_client.as_ref());
     handle_verify_sms_with_api(
         session_id,
         phone_choice_id,
@@ -234,6 +258,7 @@ pub fn handle_verify_sms(
         policy,
         sms_challenges,
         now,
+        &sms_context,
         api_client.as_ref(),
     )
 }
@@ -246,6 +271,7 @@ fn handle_verify_sms_with_api(
     policy: &PolicyContext,
     sms_challenges: &mut SmsChallengeState,
     now: Instant,
+    sms_context: &SmsAuditContext,
     api: Option<&impl SmsVerifyApi>,
 ) -> IpcResponse {
     info!(
@@ -307,7 +333,7 @@ fn handle_verify_sms_with_api(
     };
 
     match api {
-        Some(api) => match api.verify_sms_code(&challenge_token, code) {
+        Some(api) => match api.verify_sms_code(&challenge_token, code, sms_context) {
             Ok(()) => {
                 let _ = sms_challenges.mark_verified(session_id, now);
                 info!(
@@ -363,6 +389,22 @@ fn handle_verify_sms_with_api(
             );
             IpcResponse::failure("认证服务配置无效，请联系管理员")
         }
+    }
+}
+
+fn build_sms_audit_context(
+    session_id: u32,
+    config: &auth_config::AppConfig,
+    api: Option<&impl crate::audit_ip::PublicIpApi>,
+) -> SmsAuditContext {
+    let fields = build_mfa_audit_fields(session_id, AuthMethod::PhoneCode, config, api);
+    SmsAuditContext {
+        request_id: fields.request_id,
+        session_id: fields.session_id,
+        client_ip: fields.client_ip,
+        host_public_ip: fields.host_public_ip,
+        host_private_ips: fields.host_private_ips,
+        host_uuid: fields.host_uuid,
     }
 }
 
@@ -480,7 +522,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
-    use auth_api::{ApiError, SmsChallenge};
+    use auth_api::{ApiError, SmsAuditContext, SmsChallenge};
     use auth_config::{AppConfig, PhoneConfig, PhoneSource};
 
     use super::{
@@ -518,7 +560,12 @@ mod tests {
     }
 
     impl SmsVerifyApi for FakeVerifyApi {
-        fn verify_sms_code(&self, challenge_token: &str, code: &str) -> Result<(), ApiError> {
+        fn verify_sms_code(
+            &self,
+            challenge_token: &str,
+            code: &str,
+            _context: &SmsAuditContext,
+        ) -> Result<(), ApiError> {
             self.calls
                 .lock()
                 .unwrap()
@@ -562,7 +609,11 @@ mod tests {
     }
 
     impl SmsSendApi for FakeSendApi {
-        fn send_sms_code(&self, phone: &str) -> Result<SmsChallenge, ApiError> {
+        fn send_sms_code(
+            &self,
+            phone: &str,
+            _context: &SmsAuditContext,
+        ) -> Result<SmsChallenge, ApiError> {
             self.calls.lock().unwrap().push(phone.to_owned());
             self.result.clone()
         }
@@ -598,6 +649,17 @@ mod tests {
         fn verify_second_password(&self, password: &str) -> Result<(), ApiError> {
             self.calls.lock().unwrap().push(password.to_owned());
             self.result.clone()
+        }
+    }
+
+    fn default_sms_context() -> SmsAuditContext {
+        SmsAuditContext {
+            request_id: "mfa-7-phone_code".to_owned(),
+            session_id: 7,
+            client_ip: "unknown".to_owned(),
+            host_public_ip: "unknown".to_owned(),
+            host_private_ips: vec!["192.168.1.*".to_owned()],
+            host_uuid: "unknown".to_owned(),
         }
     }
 
@@ -639,6 +701,7 @@ mod tests {
             &policy,
             &mut sms_challenges,
             Instant::now(),
+            &default_sms_context(),
             Some(&FakeSendApi::issue("service-token", 300, 60)),
         );
 
@@ -667,6 +730,7 @@ mod tests {
             &policy,
             &mut sms_challenges,
             now,
+            &default_sms_context(),
             Some(&api),
         );
 
@@ -711,6 +775,7 @@ mod tests {
             &policy,
             &mut sms_challenges,
             now,
+            &default_sms_context(),
             Some(&api),
         );
 
@@ -753,6 +818,7 @@ mod tests {
             &policy,
             &mut sms_challenges,
             now,
+            &default_sms_context(),
             Some(&api),
         );
 
@@ -784,6 +850,7 @@ mod tests {
             &policy,
             &mut sms_challenges,
             now,
+            &default_sms_context(),
             None::<&FakeSendApi>,
         );
 
@@ -815,6 +882,7 @@ mod tests {
                 &policy,
                 &mut sms_challenges,
                 now,
+                &default_sms_context(),
                 Some(&send_api),
             )
             .ok
@@ -828,6 +896,7 @@ mod tests {
                 &policy,
                 &mut sms_challenges,
                 now,
+                &default_sms_context(),
                 Some(&api),
             )
             .ok
@@ -850,6 +919,7 @@ mod tests {
                 &policy,
                 &mut sms_challenges,
                 now,
+                &default_sms_context(),
                 Some(&send_api),
             )
             .ok
@@ -863,6 +933,7 @@ mod tests {
                 &policy,
                 &mut sms_challenges,
                 now,
+                &default_sms_context(),
                 Some(&api),
             )
             .ok
@@ -916,6 +987,7 @@ mod tests {
             &policy,
             &mut sms_challenges,
             Instant::now(),
+            &default_sms_context(),
             Some(&FakeVerifyApi::success()),
         );
 
@@ -945,6 +1017,7 @@ mod tests {
                 &policy,
                 &mut sms_challenges,
                 now,
+                &default_sms_context(),
                 Some(&FakeSendApi::issue("opaque-service-token", 300, 60)),
             )
             .ok
@@ -958,6 +1031,7 @@ mod tests {
             &policy,
             &mut sms_challenges,
             now,
+            &default_sms_context(),
             Some(&FakeVerifyApi::success()),
         );
 
@@ -987,6 +1061,7 @@ mod tests {
                 &policy,
                 &mut sms_challenges,
                 now,
+                &default_sms_context(),
                 Some(&FakeSendApi::issue("opaque-service-token", 300, 60)),
             )
             .ok
@@ -1000,6 +1075,7 @@ mod tests {
             &policy,
             &mut sms_challenges,
             now,
+            &default_sms_context(),
             Some(&FakeVerifyApi::success()),
         );
 
@@ -1083,6 +1159,7 @@ mod tests {
                 &policy,
                 &mut sms_challenges,
                 now,
+                &default_sms_context(),
                 Some(&send_api),
             )
             .ok
@@ -1096,6 +1173,7 @@ mod tests {
             &policy,
             &mut sms_challenges,
             now,
+            &default_sms_context(),
             Some(&api),
         );
 
@@ -1129,6 +1207,7 @@ mod tests {
                 &policy,
                 &mut sms_challenges,
                 now,
+                &default_sms_context(),
                 Some(&send_api),
             )
             .ok
@@ -1142,6 +1221,7 @@ mod tests {
             &policy,
             &mut sms_challenges,
             now,
+            &default_sms_context(),
             None::<&FakeVerifyApi>,
         );
 

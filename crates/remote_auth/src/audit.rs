@@ -169,6 +169,16 @@ fn build_audit_context(
     context
 }
 
+pub(crate) fn build_mfa_audit_fields(
+    session_id: u32,
+    method: AuthMethod,
+    config: &AppConfig,
+    api: Option<&impl PublicIpApi>,
+) -> AuditLogFields {
+    build_audit_context(session_id, method, config, api)
+        .sanitized_fields(config.audit.ip_logging.clone())
+}
+
 fn auth_method_name(method: AuthMethod) -> &'static str {
     match method {
         AuthMethod::PhoneCode => "phone_code",

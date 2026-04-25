@@ -45,7 +45,7 @@
 
 - [ ] 采集 RDP 客户端 IP，失败时填 `unknown`
 - [x] `auth_api` + helper 已支持获取本机公网 IP；占位服务、解析失败或网络失败时回退 `unknown`
-- [ ] `send_sms` / `verify_sms` / `post_login_log` 带审计上下文（当前 `post_login_log` 已带公网/内网 IP）
+- [ ] `send_sms` / `verify_sms` / `post_login_log` 带审计上下文（当前三者都已带 helper 生成的脱敏 host 上下文，仍缺 RDP 客户端 IP 采集）
 - [x] 登录审计中的公网 / 内网 IP 输出已受 `audit.ip_logging = full|masked|off` 控制
 
 ### P2：真实业务能力
@@ -91,7 +91,7 @@
 
 - [ ] helper 不可用或 IPC 超时时 CP fail closed，且不长时间阻塞 LogonUI
 - [ ] helper 已认证 session 命中与未命中时，缺失 serialization 走不同等待策略
-- [ ] `send_sms` 会携带公网 IP，并在公网 IP 不可用时按策略降级
+- [x] `send_sms` / `verify_sms` 会携带公网 / 内网 IP 审计上下文，并在公网 IP 不可用时按策略降级
 - [ ] 远程配置拉取、缓存、刷新、失败回退
 - [ ] tracing 文件日志按预期写入和轮转
 
