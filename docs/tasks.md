@@ -61,7 +61,7 @@
 - [x] 将 `SmsChallenge`、通用响应 envelope 等稳定模型拆到 `models.rs`
 - [x] 将 `AuthApiClient` 基础配置、placeholder 判断、超时 getter 收敛到 `client.rs`
 - [x] 将 `post_json`、`reqwest` 错误映射等 HTTP transport 细节拆到 `transport.rs`
-- [ ] 将短信 challenge 相关请求/响应和实现拆到 `sms.rs`
+- [x] 将短信 challenge 相关请求/响应和实现拆到 `sms.rs`
 - [ ] 将二次密码请求/响应和实现拆到 `second_password.rs`
 - [ ] 将 mock HTTP server 和请求捕获工具拆到 `test_support.rs`
 - [ ] `lib.rs` 只保留模块声明和必要 `pub use`
