@@ -26,6 +26,23 @@ impl AuthApiClient {
             .error_for_status()
             .map_err(map_reqwest_error)
     }
+
+    /// 公网 IP 查询使用独立 endpoint，因此这里补一个通用 GET 能力，避免业务模块各自复制
+    /// timeout / HTTP 状态映射细节。
+    pub(crate) fn get_url(&self, endpoint: &str) -> Result<Response> {
+        debug!(
+            target: "auth_api",
+            operation = "get_url",
+            endpoint = %endpoint,
+            "auth_api 正在发起 HTTP GET 请求"
+        );
+        self.http_client
+            .get(endpoint)
+            .send()
+            .map_err(map_reqwest_error)?
+            .error_for_status()
+            .map_err(map_reqwest_error)
+    }
 }
 
 fn map_reqwest_error(error: reqwest::Error) -> ApiError {

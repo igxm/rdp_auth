@@ -4,6 +4,7 @@
 //! 这些逻辑不能进入 LogonUI 进程；GUI 也不能成为 RDP MFA 登录链路的运行依赖。
 
 mod audit;
+mod audit_ip;
 mod diagnostics;
 mod host_network;
 mod mfa;

@@ -101,6 +101,15 @@ diagnostic_level = "info"
 
 当前 `auth_config` 已落地的 schema 包含 `[auth_methods]`、`[mfa]`、`[phone]`、`[api]`、`[audit]`、`[remote_config]`、`[logging]`。真实 API 调用、远程配置拉取、远程缓存加密落盘和完整性校验属于 helper/auth_api 后续任务，Credential Provider 不直接读取这些业务配置字段。
 
+其中与审计上下文直接相关的现状如下：
+
+- `api.public_ip_endpoint` 已由 helper / `auth_api` 用于查询本机公网出口 IP；默认占位地址或查询失败时回退 `unknown`。
+- `audit.ip_logging = "full" | "masked" | "off"` 当前已经作用于登录审计里的公网 / 内网 IP 输出：
+  - `full`：记录完整 IP
+  - `masked`：IPv4 保留前三段、IPv6 保留前四段
+  - `off`：不输出 IP 列表，单值字段回退 `unknown`
+- `api.require_public_ip_for_sms` 仍保留给短信链路后续接入使用；当前已生效的是登录审计上下文，不会因为公网 IP 查询失败阻断登录日志 mock / fallback 路径。
+
 ## 多手机号选择框方案（后续）
 
 后续如果需要在二次认证页面提供多个手机号选择框，安全边界仍保持不变：完整手机号只能由 helper 从加密配置读取并短暂停留在 helper 内存中，不能进入 Credential Provider、IPC payload、诊断日志或错误文本。Credential Provider 只拿到可渲染的脱敏选项和非敏感选择 ID。

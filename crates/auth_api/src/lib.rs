@@ -8,6 +8,7 @@ mod client;
 mod error;
 mod login_log;
 mod models;
+mod public_ip;
 mod second_password;
 mod sms;
 #[cfg(test)]

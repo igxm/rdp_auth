@@ -1,12 +1,15 @@
 //! helper 侧登录审计入口。
 //!
-//! 审计日志先在 helper 内部统一做脱敏，再决定是写本地诊断日志还是上报到真实服务端，
-//! 避免 CP 或 IPC 直接知道审计 HTTP 形状。
+//! 审计日志先在 helper 内统一做脱敏和策略裁剪，再决定是写本地诊断日志还是上报到真实服务端，
+//! 避免 CP 或 IPC 直接知道审计 HTTP 形状，也避免 IP 输出策略散落到多处逻辑里。
+
 use auth_api::{ApiError as AuthApiError, AuthApiClient, LoginAuditRecord};
-use auth_config::AppConfig;
+use auth_config::{AppConfig, IpLoggingMode};
 use auth_core::AuthMethod;
 use auth_ipc::IpcResponse;
 use tracing::info;
+
+use crate::audit_ip::{PublicIpApi, format_ip_field, format_ip_list, resolve_host_public_ip};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditContext {
@@ -32,17 +35,13 @@ impl AuditContext {
         }
     }
 
-    pub fn sanitized_fields(&self) -> AuditLogFields {
+    pub fn sanitized_fields(&self, ip_logging: IpLoggingMode) -> AuditLogFields {
         AuditLogFields {
             request_id: self.request_id.clone(),
             session_id: self.session_id,
-            client_ip: sanitize_audit_field(&self.client_ip),
-            host_public_ip: sanitize_audit_field(&self.host_public_ip),
-            host_private_ips: self
-                .host_private_ips
-                .iter()
-                .map(|value| sanitize_audit_field(value))
-                .collect(),
+            client_ip: format_ip_field(&self.client_ip, ip_logging.clone()),
+            host_public_ip: format_ip_field(&self.host_public_ip, ip_logging.clone()),
+            host_private_ips: format_ip_list(&self.host_private_ips, ip_logging),
             host_uuid: sanitize_audit_field(&self.host_uuid),
             method: auth_method_name(self.method).to_owned(),
         }
@@ -70,6 +69,10 @@ impl LoginLogApi for AuthApiClient {
     }
 }
 
+trait AuditApi: LoginLogApi + PublicIpApi {}
+
+impl AuditApi for AuthApiClient {}
+
 pub fn handle_post_login_log(session_id: u32, method: AuthMethod, success: bool) -> IpcResponse {
     let config = auth_config::load_app_config();
     let api_client = match AuthApiClient::new(config.api.clone()) {
@@ -93,10 +96,10 @@ fn handle_post_login_log_with_api(
     method: AuthMethod,
     success: bool,
     config: &AppConfig,
-    api: Option<&impl LoginLogApi>,
+    api: Option<&impl AuditApi>,
 ) -> IpcResponse {
-    let context = AuditContext::for_mfa_request(session_id, method);
-    let fields = context.sanitized_fields();
+    let context = build_audit_context(session_id, method, config, api);
+    let fields = context.sanitized_fields(config.audit.ip_logging.clone());
     let result = if success { "success" } else { "failure" };
     if !config.audit.post_login_log {
         info!(
@@ -132,7 +135,7 @@ fn handle_post_login_log_with_api(
         host_uuid = %fields.host_uuid,
         auth_method = %fields.method,
         result,
-        "登录日志 mock 已记录"
+        "登录日志审计上下文已生成"
     );
 
     match api {
@@ -153,6 +156,17 @@ fn handle_post_login_log_with_api(
         },
         None => IpcResponse::failure("认证服务配置无效，请联系管理员"),
     }
+}
+
+fn build_audit_context(
+    session_id: u32,
+    method: AuthMethod,
+    config: &AppConfig,
+    api: Option<&impl PublicIpApi>,
+) -> AuditContext {
+    let mut context = AuditContext::for_mfa_request(session_id, method);
+    context.host_public_ip = resolve_host_public_ip(session_id, &config.audit, api);
+    context
 }
 
 fn auth_method_name(method: AuthMethod) -> &'static str {
@@ -182,33 +196,41 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use auth_api::ApiError;
-    use auth_config::AppConfig;
+    use auth_config::{AppConfig, IpLoggingMode};
 
     use super::{
-        AuditContext, LoginLogApi, auth_method_name, handle_post_login_log,
-        handle_post_login_log_with_api,
+        AuditApi, AuditContext, LoginLogApi, auth_method_name, build_audit_context,
+        handle_post_login_log, handle_post_login_log_with_api,
     };
     use auth_core::AuthMethod;
 
     #[derive(Clone)]
-    struct FakeLoginLogApi {
+    struct FakeAuditApi {
         calls: Arc<Mutex<Vec<auth_api::LoginAuditRecord>>>,
-        result: Result<(), ApiError>,
+        login_result: Result<(), ApiError>,
+        public_ip_result: Result<String, ApiError>,
     }
 
-    impl FakeLoginLogApi {
+    impl FakeAuditApi {
         fn success() -> Self {
             Self {
                 calls: Arc::new(Mutex::new(Vec::new())),
-                result: Ok(()),
+                login_result: Ok(()),
+                public_ip_result: Ok("8.8.4.4".to_owned()),
             }
         }
 
         fn reject(result: ApiError) -> Self {
             Self {
                 calls: Arc::new(Mutex::new(Vec::new())),
-                result: Err(result),
+                login_result: Err(result),
+                public_ip_result: Ok("8.8.4.4".to_owned()),
             }
+        }
+
+        fn with_public_ip(mut self, result: Result<String, ApiError>) -> Self {
+            self.public_ip_result = result;
+            self
         }
 
         fn calls(&self) -> Vec<auth_api::LoginAuditRecord> {
@@ -216,15 +238,23 @@ mod tests {
         }
     }
 
-    impl LoginLogApi for FakeLoginLogApi {
+    impl LoginLogApi for FakeAuditApi {
         fn post_login_log(
             &self,
             record: &auth_api::LoginAuditRecord,
         ) -> Result<(), auth_api::ApiError> {
             self.calls.lock().unwrap().push(record.clone());
-            self.result.clone()
+            self.login_result.clone()
         }
     }
+
+    impl crate::audit_ip::PublicIpApi for FakeAuditApi {
+        fn fetch_public_ip(&self) -> Result<String, auth_api::ApiError> {
+            self.public_ip_result.clone()
+        }
+    }
+
+    impl AuditApi for FakeAuditApi {}
 
     #[test]
     fn post_login_log_returns_mock_success_without_payload() {
@@ -250,7 +280,7 @@ mod tests {
             AuthMethod::PhoneCode,
             true,
             &disabled,
-            None::<&FakeLoginLogApi>,
+            None::<&FakeAuditApi>,
         );
 
         assert!(response.ok);
@@ -259,7 +289,7 @@ mod tests {
 
     #[test]
     fn post_login_log_uses_auth_api_when_available() {
-        let api = FakeLoginLogApi::success();
+        let api = FakeAuditApi::success();
         let response = handle_post_login_log_with_api(
             7,
             AuthMethod::PhoneCode,
@@ -272,13 +302,14 @@ mod tests {
         let calls = api.calls();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].request_id, "mfa-7-phone_code");
+        assert_eq!(calls[0].host_public_ip, "8.8.4.*");
         assert_eq!(calls[0].auth_method, "phone_code");
         assert!(calls[0].success);
     }
 
     #[test]
     fn post_login_log_falls_back_to_local_success_when_not_implemented() {
-        let api = FakeLoginLogApi::reject(ApiError::NotImplemented {
+        let api = FakeAuditApi::reject(ApiError::NotImplemented {
             operation: "post_login_log",
         });
 
@@ -296,7 +327,7 @@ mod tests {
 
     #[test]
     fn post_login_log_maps_api_errors_to_safe_failure() {
-        let api = FakeLoginLogApi::reject(ApiError::HttpStatus { status: 503 });
+        let api = FakeAuditApi::reject(ApiError::HttpStatus { status: 503 });
 
         let response = handle_post_login_log_with_api(
             7,
@@ -314,6 +345,15 @@ mod tests {
     }
 
     #[test]
+    fn build_audit_context_uses_unknown_public_ip_when_lookup_fails() {
+        let api = FakeAuditApi::success().with_public_ip(Err(ApiError::HttpStatus { status: 503 }));
+        let context =
+            build_audit_context(7, AuthMethod::PhoneCode, &AppConfig::default(), Some(&api));
+
+        assert_eq!(context.host_public_ip, "unknown");
+    }
+
+    #[test]
     fn auth_method_names_are_stable_for_audit_logs() {
         assert_eq!(auth_method_name(AuthMethod::PhoneCode), "phone_code");
         assert_eq!(
@@ -324,6 +364,24 @@ mod tests {
     }
 
     #[test]
+    fn sanitized_fields_obey_ip_logging_mode() {
+        let mut context = AuditContext::for_mfa_request(7, AuthMethod::PhoneCode);
+        context.client_ip = "8.8.8.8".to_owned();
+        context.host_public_ip = "8.8.4.4".to_owned();
+        context.host_private_ips = vec!["192.168.1.8".to_owned()];
+
+        let masked = context.sanitized_fields(IpLoggingMode::Masked);
+        assert_eq!(masked.client_ip, "8.8.8.*");
+        assert_eq!(masked.host_public_ip, "8.8.4.*");
+        assert_eq!(masked.host_private_ips, vec!["192.168.1.*".to_owned()]);
+
+        let off = context.sanitized_fields(IpLoggingMode::Off);
+        assert_eq!(off.client_ip, "unknown");
+        assert_eq!(off.host_public_ip, "unknown");
+        assert!(off.host_private_ips.is_empty());
+    }
+
+    #[test]
     fn audit_context_contains_required_fields_without_sensitive_values() {
         let mut context = AuditContext::for_mfa_request(7, AuthMethod::PhoneCode);
         context.client_ip = "10.0.0.8 token=secret".to_owned();
@@ -331,7 +389,7 @@ mod tests {
         context.host_private_ips = vec!["192.168.1.8".to_owned(), "code=123456".to_owned()];
         context.host_uuid = "host-uuid-001 serialization=abcdef".to_owned();
 
-        let fields = context.sanitized_fields();
+        let fields = context.sanitized_fields(IpLoggingMode::Full);
         let serialized = format!("{fields:?}");
 
         assert_eq!(fields.request_id, "mfa-7-phone_code");

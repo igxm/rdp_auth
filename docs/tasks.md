@@ -44,9 +44,9 @@
 ### P1：helper 审计上下文补齐
 
 - [ ] 采集 RDP 客户端 IP，失败时填 `unknown`
-- [ ] 获取本机公网 IP，失败时按策略返回 `unknown` 或 fail closed
-- [ ] `send_sms` / `verify_sms` / `post_login_log` 带审计上下文
-- [ ] IP 记录是否完整输出受配置控制
+- [x] `auth_api` + helper 已支持获取本机公网 IP；占位服务、解析失败或网络失败时回退 `unknown`
+- [ ] `send_sms` / `verify_sms` / `post_login_log` 带审计上下文（当前 `post_login_log` 已带公网/内网 IP）
+- [x] 登录审计中的公网 / 内网 IP 输出已受 `audit.ip_logging = full|masked|off` 控制
 
 ### P2：真实业务能力
 
@@ -77,7 +77,7 @@
 
 ### 单元测试
 
-- [ ] 公网 IP 获取失败时按策略返回 `unknown` 或 fail closed
+- [x] 公网 IP 获取失败时按策略返回 `unknown`
 - [ ] MFA timeout generation 与 missing-serialization generation 的独立性边界
 - [x] `auth_api` mock 服务下的真实 HTTP `send_sms` / `verify_sms`
 - [x] `auth_api` mock 服务下的真实 HTTP `verify_second_password`

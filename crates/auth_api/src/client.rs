@@ -70,6 +70,10 @@ impl AuthApiClient {
         &self.public_ip_endpoint
     }
 
+    pub(crate) fn uses_placeholder_public_ip_service(&self) -> bool {
+        self.public_ip_endpoint.contains("example.invalid")
+    }
+
     pub(crate) fn uses_placeholder_service(&self) -> bool {
         self.base_url.contains("example.invalid")
     }

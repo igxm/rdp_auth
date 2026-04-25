@@ -97,7 +97,11 @@ fn read_request(stream: &mut TcpStream) -> CapturedRequest {
     let method = parts.next().unwrap().to_owned();
     let path = parts.next().unwrap().to_owned();
     let body = &buffer[body_start..body_start + content_length];
-    let json_body = serde_json::from_slice(body).unwrap();
+    let json_body = if content_length == 0 {
+        Value::Null
+    } else {
+        serde_json::from_slice(body).unwrap()
+    };
 
     CapturedRequest {
         method,

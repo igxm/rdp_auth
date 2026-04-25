@@ -252,6 +252,63 @@ fn post_login_log_posts_real_json_and_accepts_ok_response() {
 }
 
 #[test]
+fn fetch_public_ip_accepts_json_ip_response() {
+    let server = MockHttpServer::serve_once(200, json!({ "ip": "8.8.4.4" }));
+    let client = AuthApiClient::new(ApiConfig {
+        base_url: server.base_url(),
+        public_ip_endpoint: format!("{}/ip", server.base_url()),
+        ..Default::default()
+    })
+    .unwrap();
+
+    let ip = client.fetch_public_ip().unwrap();
+    let request = server.finish();
+
+    assert_eq!(ip, "8.8.4.4");
+    assert_eq!(request.method, "GET");
+    assert_eq!(request.path, "/ip");
+    assert_eq!(request.json_body, serde_json::Value::Null);
+}
+
+#[test]
+fn fetch_public_ip_accepts_plain_text_response() {
+    let server = MockHttpServer::serve_once_raw(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 7\r\nConnection: close\r\n\r\n8.8.8.8"
+            .to_owned(),
+    );
+    let client = AuthApiClient::new(ApiConfig {
+        base_url: "https://auth.example.test".to_owned(),
+        public_ip_endpoint: format!("{}/ip", server.base_url()),
+        ..Default::default()
+    })
+    .unwrap();
+
+    let ip = client.fetch_public_ip().unwrap();
+    let request = server.finish();
+
+    assert_eq!(ip, "8.8.8.8");
+    assert_eq!(request.method, "GET");
+    assert_eq!(request.path, "/ip");
+}
+
+#[test]
+fn fetch_public_ip_rejects_private_or_invalid_response() {
+    let server = MockHttpServer::serve_once(200, json!({ "ip": "192.168.1.8" }));
+    let client = AuthApiClient::new(ApiConfig {
+        base_url: "https://auth.example.test".to_owned(),
+        public_ip_endpoint: format!("{}/ip", server.base_url()),
+        ..Default::default()
+    })
+    .unwrap();
+
+    let error = client.fetch_public_ip().unwrap_err();
+
+    assert_eq!(error, ApiError::ResponseParse);
+    let request = server.finish();
+    assert_eq!(request.path, "/ip");
+}
+
+#[test]
 fn malformed_response_maps_to_parse_error_without_echoing_phone() {
     let server = MockHttpServer::serve_once_raw(
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 1\r\nConnection: close\r\n\r\n{"
@@ -347,6 +404,12 @@ fn placeholder_default_service_keeps_mock_fallback_contract() {
         client.post_login_log(&record).unwrap_err(),
         ApiError::NotImplemented {
             operation: "post_login_log"
+        }
+    );
+    assert_eq!(
+        client.fetch_public_ip().unwrap_err(),
+        ApiError::NotImplemented {
+            operation: "fetch_public_ip"
         }
     );
 }
