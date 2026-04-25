@@ -4,17 +4,15 @@
 //! 这里先把真实 HTTP 请求、错误映射和 mock 服务测试链路落稳，避免后续在 helper
 //! 层混入请求拼装细节或把敏感字段打进日志。
 
+mod client;
 mod error;
 mod models;
+mod transport;
 
-use std::time::Duration;
-
-use auth_config::ApiConfig;
 use models::BasicResponseEnvelope;
-use reqwest::blocking::{Client, Response};
 use serde::{Deserialize, Serialize};
-use tracing::debug;
 
+pub use client::AuthApiClient;
 pub use error::ApiError;
 pub use models::SmsChallenge;
 
@@ -29,69 +27,7 @@ const VERIFY_SMS_PATH: &str = "/api/host_instance/verifySSHLoginCode";
 // 这里先按 helper -> auth_api 的受控边界约定独立路径，后续联调时只需要替换这一处常量。
 const VERIFY_SECOND_PASSWORD_PATH: &str = "/api/host_instance/verifySecondPassword";
 
-/// 认证 API 客户端配置快照。
-#[derive(Debug, Clone)]
-pub struct AuthApiClient {
-    base_url: String,
-    public_ip_endpoint: String,
-    connect_timeout: Duration,
-    request_timeout: Duration,
-    require_public_ip_for_sms: bool,
-    http_client: Client,
-}
-
 impl AuthApiClient {
-    pub fn new(config: ApiConfig) -> Result<Self> {
-        let config = config.normalized_for_api_client();
-        if !looks_like_http_url(&config.base_url) {
-            return Err(ApiError::InvalidConfig { reason: "base_url" });
-        }
-        if !looks_like_http_url(&config.public_ip_endpoint) {
-            return Err(ApiError::InvalidConfig {
-                reason: "public_ip_endpoint",
-            });
-        }
-
-        let connect_timeout = Duration::from_secs(config.connect_timeout_seconds);
-        let request_timeout = Duration::from_secs(config.request_timeout_seconds);
-        let http_client = Client::builder()
-            .connect_timeout(connect_timeout)
-            .timeout(request_timeout)
-            .build()
-            .map_err(|_| ApiError::InvalidConfig {
-                reason: "http_client",
-            })?;
-
-        Ok(Self {
-            base_url: trim_trailing_slash(config.base_url),
-            public_ip_endpoint: config.public_ip_endpoint,
-            connect_timeout,
-            request_timeout,
-            require_public_ip_for_sms: config.require_public_ip_for_sms,
-            http_client,
-        })
-    }
-
-    pub fn endpoint_url(&self, path: &str) -> String {
-        format!("{}/{}", self.base_url, path.trim_start_matches('/'))
-    }
-
-    pub fn connect_timeout(&self) -> Duration {
-        self.connect_timeout
-    }
-
-    pub fn request_timeout(&self) -> Duration {
-        self.request_timeout
-    }
-
-    pub fn require_public_ip_for_sms(&self) -> bool {
-        self.require_public_ip_for_sms
-    }
-
-    pub fn public_ip_endpoint(&self) -> &str {
-        &self.public_ip_endpoint
-    }
-
     /// 请求发送短信验证码。
     ///
     /// 这里保留完整手机号入参，是因为 helper -> 后端仍需要按真实手机号发起发送请求；
@@ -198,28 +134,6 @@ impl AuthApiClient {
             operation: "post_login_log",
         })
     }
-
-    fn post_json<T: Serialize>(&self, path: &str, body: &T) -> Result<Response> {
-        let endpoint = self.endpoint_url(path);
-        debug!(
-            target: "auth_api",
-            operation = "post_json",
-            path,
-            endpoint = %endpoint,
-            "auth_api 正在发起 HTTP 请求"
-        );
-        self.http_client
-            .post(endpoint)
-            .json(body)
-            .send()
-            .map_err(map_reqwest_error)?
-            .error_for_status()
-            .map_err(map_reqwest_error)
-    }
-
-    fn uses_placeholder_service(&self) -> bool {
-        self.base_url.contains("example.invalid")
-    }
 }
 
 #[derive(Debug, Serialize)]
@@ -251,42 +165,6 @@ struct SendSmsEnvelope {
     expires_in_seconds: Option<u64>,
     #[serde(default)]
     resend_after_seconds: Option<u64>,
-}
-
-trait ApiConfigNormalize {
-    fn normalized_for_api_client(self) -> Self;
-}
-
-impl ApiConfigNormalize for ApiConfig {
-    fn normalized_for_api_client(mut self) -> Self {
-        if self.connect_timeout_seconds == 0 {
-            self.connect_timeout_seconds = 5;
-        }
-        if self.request_timeout_seconds == 0 {
-            self.request_timeout_seconds = 10;
-        }
-        self
-    }
-}
-
-fn looks_like_http_url(value: &str) -> bool {
-    value.starts_with("https://") || value.starts_with("http://")
-}
-
-fn trim_trailing_slash(value: String) -> String {
-    value.trim_end_matches('/').to_owned()
-}
-
-fn map_reqwest_error(error: reqwest::Error) -> ApiError {
-    if error.is_timeout() {
-        ApiError::Timeout
-    } else if let Some(status) = error.status() {
-        ApiError::HttpStatus {
-            status: status.as_u16(),
-        }
-    } else {
-        ApiError::Network
-    }
 }
 
 #[cfg(test)]
