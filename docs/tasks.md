@@ -57,8 +57,8 @@
 
 ### P2：`auth_api` 结构整理
 
-- [ ] 将 `ApiError` 和稳定错误映射拆到 `error.rs`
-- [ ] 将 `SmsChallenge`、通用响应 envelope 等稳定模型拆到 `models.rs`
+- [x] 将 `ApiError` 和稳定错误映射拆到 `error.rs`
+- [x] 将 `SmsChallenge`、通用响应 envelope 等稳定模型拆到 `models.rs`
 - [ ] 将 `AuthApiClient` 基础配置、placeholder 判断、超时 getter 收敛到 `client.rs`
 - [ ] 将 `post_json`、`reqwest` 错误映射等 HTTP transport 细节拆到 `transport.rs`
 - [ ] 将短信 challenge 相关请求/响应和实现拆到 `sms.rs`

@@ -4,13 +4,19 @@
 //! 这里先把真实 HTTP 请求、错误映射和 mock 服务测试链路落稳，避免后续在 helper
 //! 层混入请求拼装细节或把敏感字段打进日志。
 
+mod error;
+mod models;
+
 use std::time::Duration;
 
 use auth_config::ApiConfig;
+use models::BasicResponseEnvelope;
 use reqwest::blocking::{Client, Response};
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 use tracing::debug;
+
+pub use error::ApiError;
+pub use models::SmsChallenge;
 
 pub type Result<T> = std::result::Result<T, ApiError>;
 pub type Error = ApiError;
@@ -22,63 +28,6 @@ const VERIFY_SMS_PATH: &str = "/api/host_instance/verifySSHLoginCode";
 // 二次密码接口在旧文档里只有“发起校验请求”的抽象描述，尚无正式服务端契约。
 // 这里先按 helper -> auth_api 的受控边界约定独立路径，后续联调时只需要替换这一处常量。
 const VERIFY_SECOND_PASSWORD_PATH: &str = "/api/host_instance/verifySecondPassword";
-
-/// 发送短信后由服务端返回的 challenge 元数据。
-///
-/// `challenge_token` 后续会成为 verify_sms 的唯一校验凭据，因此它只能在 helper 内存
-/// 和 helper -> 后端链路中出现，不能回流到 IPC、CP 或日志。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SmsChallenge {
-    pub challenge_token: String,
-    pub expires_in_seconds: u64,
-    pub resend_after_seconds: u64,
-}
-
-/// API 层可匹配错误。Display 文案必须安全，不能包含手机号、验证码、密码、token
-/// 或原始响应体。
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum ApiError {
-    #[error("API 配置无效: {reason}")]
-    InvalidConfig { reason: &'static str },
-    #[error("API 网络请求失败")]
-    Network,
-    #[error("API 请求超时")]
-    Timeout,
-    #[error("API HTTP 状态异常: {status}")]
-    HttpStatus { status: u16 },
-    #[error("API 服务端拒绝: {code}")]
-    ServerRejected { code: String },
-    #[error("API 响应解析失败")]
-    ResponseParse,
-    #[error("API 尚未接入: {operation}")]
-    NotImplemented { operation: &'static str },
-}
-
-impl ApiError {
-    pub fn user_message(&self) -> &'static str {
-        match self {
-            Self::InvalidConfig { .. } => "认证服务配置无效，请联系管理员",
-            Self::Network | Self::Timeout | Self::HttpStatus { .. } => {
-                "认证服务暂时不可用，请稍后重试或联系管理员"
-            }
-            Self::ServerRejected { .. } => "二次认证未通过",
-            Self::ResponseParse => "认证服务响应异常，请联系管理员",
-            Self::NotImplemented { .. } => "认证服务尚未接入，请联系管理员",
-        }
-    }
-
-    pub fn diagnostic_code(&self) -> &'static str {
-        match self {
-            Self::InvalidConfig { .. } => "api_invalid_config",
-            Self::Network => "api_network_error",
-            Self::Timeout => "api_timeout",
-            Self::HttpStatus { .. } => "api_http_status",
-            Self::ServerRejected { .. } => "api_server_rejected",
-            Self::ResponseParse => "api_response_parse",
-            Self::NotImplemented { .. } => "api_not_implemented",
-        }
-    }
-}
 
 /// 认证 API 客户端配置快照。
 #[derive(Debug, Clone)]
@@ -302,13 +251,6 @@ struct SendSmsEnvelope {
     expires_in_seconds: Option<u64>,
     #[serde(default)]
     resend_after_seconds: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct BasicResponseEnvelope {
-    ok: bool,
-    #[serde(default)]
-    code: Option<String>,
 }
 
 trait ApiConfigNormalize {
