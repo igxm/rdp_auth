@@ -5,6 +5,7 @@
 
 mod audit;
 mod audit_ip;
+mod client_network;
 mod diagnostics;
 mod host_network;
 mod mfa;

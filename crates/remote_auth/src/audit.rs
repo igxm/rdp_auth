@@ -165,6 +165,7 @@ fn build_audit_context(
     api: Option<&impl PublicIpApi>,
 ) -> AuditContext {
     let mut context = AuditContext::for_mfa_request(session_id, method);
+    context.client_ip = crate::client_network::rdp_client_ip_string(session_id);
     context.host_public_ip = resolve_host_public_ip(session_id, &config.audit, api);
     context
 }
